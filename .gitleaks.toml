@@ -1,0 +1,8 @@
+# gitleaks configuration (CI: .github/workflows/secret-scan.yml). The default rules plus an allowlist for test fixtures
+# (dummy proxy credentials and DSNs used to test redaction). Anything else that matches fails the scan.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures: dummy credentials used to test redaction and the private-address switch"
+paths = ['''^tests/''']

@@ -1,0 +1,23 @@
+# Install harvest-ai first (e.g. `pipx install 'harvest-ai[web]'` as root with PIPX_BIN_DIR=/usr/local/bin) and adjust
+# ExecStart to `command -v harvest` on your host.
+# Example: the web app + API. Copy to /etc/systemd/system/, adjust User and paths, then
+#   systemctl daemon-reload && systemctl enable --now harvest-web
+[Unit]
+Description=harvest web app and API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=harvest
+Environment=HARVEST_HOME=/var/lib/harvest
+EnvironmentFile=-/etc/harvest.env
+ExecStart=/usr/local/bin/harvest web --host 127.0.0.1 --port 8080
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/harvest
+
+[Install]
+WantedBy=multi-user.target

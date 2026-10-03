@@ -1,0 +1,14 @@
+name: Bug report
+description: harvest does something wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: "The command or tool call, a public page that shows it, what you expected and what you got. No credentials, proxy lists or personal data." }
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes: { label: Version or commit, placeholder: "harvest --version" }
+  - type: input
+    id: env
+    attributes: { label: Environment, placeholder: "OS, Python, HARVEST_SANDBOX, SQLite or Postgres" }

@@ -1,0 +1,61 @@
+[project]
+name = "harvest-ai"
+version = "0.1.0"
+description = "Regions + target in, clean data out: agent-driven source census, review-gated scrapers, polite collection, normalisation, storage and scheduling. MCP server, CLI, web app and Claude Code plugin."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "harvest-ai contributors" }]
+keywords = ["scraping", "data-collection", "census", "mcp", "etl", "agents"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
+dependencies = ["httpx>=0.27", "httpcore>=1.0", "mcp>=2.2,<3"]
+
+[project.optional-dependencies]
+web = ["fastapi>=0.110", "uvicorn>=0.29"]
+postgres = ["psycopg[binary]>=3.1"]
+parquet = ["pyarrow>=14"]
+browser = ["playwright>=1.40"]
+dev = ["greenlet>=3", "pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.6", "build", "fastapi>=0.110", "uvicorn>=0.29", "pyarrow>=14"]
+
+[project.scripts]
+harvest = "harvest_ai.cli:entry"
+harvest-ai = "harvest_ai.cli:entry"
+harvest-mcp = "harvest_ai.mcp_server:main"
+
+[project.urls]
+Homepage = "https://github.com/tonyyang0504/harvest"
+Source = "https://github.com/tonyyang0504/harvest"
+Issues = "https://github.com/tonyyang0504/harvest/issues"
+Changelog = "https://github.com/tonyyang0504/harvest/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harvest_ai"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src/harvest_ai", "/README.md", "/LICENSE", "/NOTICE"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 170
+target-version = "py311"
+extend-exclude = ["tests/fixtures"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I"]
+ignore = ["E501", "B008", "E731", "B904"]

@@ -1,0 +1,8 @@
+name: Feature request
+description: A locale, unit, record template, lane or interface harvest should support
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What and why, description: "Include public examples (pages, formats) where possible." }
+    validations: { required: true }

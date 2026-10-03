@@ -1,0 +1,59 @@
+name: release
+# Tag vX.Y.Z -> build -> PyPI through trusted publishing (OIDC; no stored token) from the protected `pypi` environment
+# -> GitHub release. RELEASE_CHECKLIST.md has the one-time setup.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with: { python-version: "3.12" }
+      - name: The tag matches the version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'EOF'
+          import json, os, re, tomllib
+          tag = os.environ["TAG"].removeprefix("v")
+          py = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          init = re.search(r'__version__ = "([^"]+)"', open("src/harvest_ai/__init__.py").read())[1]
+          plugin = json.load(open(".claude-plugin/plugin.json"))["version"]
+          assert tag == py == init == plugin, (tag, py, init, plugin)
+          print("releasing", tag)
+          EOF
+      - run: python -m pip install -q build && python -m build -o dist .
+      - uses: actions/upload-artifact@v7
+        with: { name: dist, path: dist/, retention-days: 30 }
+
+  publish-pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/harvest-ai/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { name: dist, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { name: dist, path: dist }
+      - name: Attach the artefacts to a GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: gh release create "$TAG" dist/* --repo "$REPO" --title "harvest-ai $TAG" --generate-notes --verify-tag

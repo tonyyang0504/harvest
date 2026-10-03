@@ -1,0 +1,21 @@
+# Install harvest-ai first (e.g. `pipx install 'harvest-ai[web]'` as root with PIPX_BIN_DIR=/usr/local/bin) and adjust
+# ExecStart to `command -v harvest` on your host.
+# Example: one scheduler tick for every project (run due sources, then the watchdog).
+[Unit]
+Description=harvest scheduler tick
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=harvest
+Environment=HARVEST_HOME=/var/lib/harvest
+EnvironmentFile=-/etc/harvest.env
+ExecStart=/usr/local/bin/harvest daemon --once --interval 3600
+TimeoutStartSec=6h
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/harvest

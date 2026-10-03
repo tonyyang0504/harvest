@@ -1,0 +1,28 @@
+# Install harvest-ai first (e.g. `pipx install 'harvest-ai[web]'` as root with PIPX_BIN_DIR=/usr/local/bin) and adjust
+# ExecStart to `command -v harvest` on your host.
+# Example: the durable job worker (runs what the web app/API/MCP enqueue). Run several for parallelism;
+# a crashed worker's jobs are re-queued when its lease expires.
+# Scraper modules run under bubblewrap (apt install bubblewrap). It needs unprivileged user namespaces: on Ubuntu
+# 24.04+ load deploy/apparmor/bwrap (AppArmor restricts them per binary). HARVEST_SANDBOX=bwrap makes the worker refuse
+# to run modules without it instead of falling back to the policy layer. Do not add RestrictNamespaces= here.
+[Unit]
+Description=harvest job worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=harvest
+Environment=HARVEST_HOME=/var/lib/harvest
+Environment=HARVEST_SANDBOX=bwrap
+EnvironmentFile=-/etc/harvest.env
+ExecStart=/usr/local/bin/harvest worker --poll 2
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/harvest
+
+[Install]
+WantedBy=multi-user.target

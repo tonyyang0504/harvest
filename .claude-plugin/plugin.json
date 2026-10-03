@@ -1,0 +1,19 @@
+{
+  "name": "harvest",
+  "version": "0.1.0",
+  "description": "Regions + target in, clean data out: agent-driven census of every site in the regions, review-gated scrapers, polite collection, normalisation, storage and scheduling.",
+  "author": {
+    "name": "harvest-ai contributors",
+    "url": "https://github.com/tonyyang0504/harvest"
+  },
+  "keywords": [
+    "scraping",
+    "data-collection",
+    "census",
+    "mcp",
+    "etl"
+  ],
+  "homepage": "https://github.com/tonyyang0504/harvest",
+  "repository": "https://github.com/tonyyang0504/harvest",
+  "license": "Apache-2.0"
+}

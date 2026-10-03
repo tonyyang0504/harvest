@@ -1,0 +1,55 @@
+# docker compose up -d                     -> web app on :8080 + scheduler worker, SQLite under the shared volume
+# docker compose --profile postgres up -d  -> also a Postgres; set HARVEST_STORE_DSN in .env to use it
+# Agent jobs (census/build/repair) need an agent CLI (e.g. `claude`) inside the image; see docs/harvest.md.
+services:
+  app:
+    build: .
+    image: harvest:local
+    ports: ["127.0.0.1:${HARVEST_PORT:-8080}:8080"]
+    environment:
+      HARVEST_ADMIN_TOKEN: ${HARVEST_ADMIN_TOKEN:?set HARVEST_ADMIN_TOKEN in .env}
+      HARVEST_STORE_DSN: ${HARVEST_STORE_DSN:-}
+      HARVEST_ALERT_WEBHOOK: ${HARVEST_ALERT_WEBHOOK:-}
+    volumes: ["harvest-data:/data"]
+    restart: unless-stopped
+
+  worker:
+    image: harvest:local
+    depends_on: [app]
+    command: ["harvest", "worker", "--schedule", "300"]  # runs queued jobs (web app submissions) + due sources
+    healthcheck:  # the image's check probes the web port, which the worker does not serve
+      test: ["CMD", "harvest", "projects"]
+      interval: 60s
+      timeout: 20s
+      retries: 3
+    environment:
+      HARVEST_STORE_DSN: ${HARVEST_STORE_DSN:-}
+      HARVEST_ALERT_WEBHOOK: ${HARVEST_ALERT_WEBHOOK:-}
+      HARVEST_REPAIR_DISPATCH: "off"
+      # The worker runs agent-written scraper modules. In a container the container is the OS boundary (bubblewrap
+      # cannot create its namespaces under Docker's default profile), so the module sandbox is the policy layer,
+      # accepted explicitly; for bubblewrap isolation run workers on a host or VM (deploy/systemd/harvest-worker.service).
+      HARVEST_SANDBOX: ${HARVEST_SANDBOX:-policy}
+    volumes: ["harvest-data:/data"]
+    # hardening: nothing writable but the data volume and two tmpfs, no capabilities, no privilege gain, bounded
+    read_only: true
+    tmpfs: ["/tmp", "/home/harvest"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 512
+    mem_limit: 2g
+    restart: unless-stopped
+
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: harvest
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}  # required when the postgres profile is used
+      POSTGRES_DB: harvest
+    volumes: ["harvest-pg:/var/lib/postgresql/data"]
+    restart: unless-stopped
+
+volumes:
+  harvest-data:
+  harvest-pg:

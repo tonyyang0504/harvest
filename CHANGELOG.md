@@ -5,7 +5,12 @@ All notable changes to harvest-ai are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.1.0] - unreleased
+## [0.1.1] - 2026-10-05
+
+### Changed
+- README (also the PyPI page): install from PyPI; the "not published yet" notes are gone.
+
+## [0.1.0] - 2026-10-04
 
 First public release.
 

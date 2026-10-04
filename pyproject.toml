@@ -1,6 +1,6 @@
 [project]
 name = "harvest-ai"
-version = "0.1.0"
+version = "0.1.1"
 description = "Regions + target in, clean data out: agent-driven source census, review-gated scrapers, polite collection, normalisation, storage and scheduling. MCP server, CLI, web app and Claude Code plugin."
 readme = "README.md"
 requires-python = ">=3.11"

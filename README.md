@@ -2,9 +2,6 @@
 
 **harvest-ai** on PyPI (the command is `harvest`; `harvest-ai` is an alias; the Python package is `harvest_ai`).
 
-> **Not published yet.** Until `harvest-ai` is on PyPI, install from source (below); do not install the name from a
-> registry.
-
 Give it a **target** and **regions**, for example "used cars" in KZ and GE, or "rental apartments"
 in PT and ES. harvest then does the rest:
 
@@ -40,11 +37,10 @@ The same core is exposed four ways:
 
 ## Quick start
 
-Once published: `pipx install "harvest-ai[web,parquet]"` (or `uv tool install "harvest-ai[web,parquet]"`). Today, from source:
-
 ```bash
-git clone https://github.com/tonyyang0504/harvest && cd harvest
-uv venv && uv pip install -e ".[web,parquet]" && source .venv/bin/activate
+pipx install "harvest-ai[web,parquet]"     # or: uv tool install "harvest-ai[web,parquet]"
+# from source instead: git clone https://github.com/tonyyang0504/harvest && cd harvest
+#   && uv venv && uv pip install -e ".[web,parquet]" && source .venv/bin/activate
 harvest new used-cars --target "used cars" --regions KZ,GE --record-type vehicles
 harvest census-plan used-cars              # angles and queries per region and language
 harvest agent used-cars census             # headless census agent (claude -p, explicit tool allowlist)
@@ -79,7 +75,6 @@ another) with an explicit tool allowlist; everything else works without one.
   browser lane is page 1 only. One project has one record type.
 - **Normalisation** covers the locales, currencies, units and date formats in the test suite; unknown formats are
   kept as cleaned text or quarantined, not guessed.
-- **Unpublished.** Installation is from source until the first release.
 
 ## Development
 

@@ -345,8 +345,8 @@ wheels = [
 ]
 
 [[package]]
-name = "harvest"
-version = "0.1.0"
+name = "harvest-ai"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "httpcore" },

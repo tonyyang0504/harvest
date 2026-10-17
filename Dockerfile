@@ -1,5 +1,5 @@
 # harvest (harvest-ai): web app + API (default command) or scheduler worker (`harvest daemon`).
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HARVEST_HOME=/data
 RUN useradd --create-home --uid 10001 harvest && mkdir -p /data && chown harvest:harvest /data

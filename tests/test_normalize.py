@@ -219,9 +219,9 @@ def test_dates_with_month_names_times_and_local_zones():
 
 def test_normalizer_event_row_needs_a_parsed_start():
     n = Normalizer(templates.get("events"), source_id="e", region="GB", report_currency="GBP", fx=FxTable({"GBP": 0.75}))
-    rec, errs, _ = n.normalize({"source_id": "1", "url": "https://x.uk/e/1", "title": "PyData London", "starts_at": "Tue, 14 Oct 2026, 18:30",
+    rec, errs, _ = n.normalize({"source_id": "1", "url": "https://x.uk/e/1", "title": "PyData London", "starts_at": "Tue, 14 Oct 2031, 18:30",
                                 "city": "Greater London", "price_min": "Free"})
-    assert errs == [] and rec["starts_at"] == "2026-10-14T18:30:00+01:00" and rec["city"] == "London" and rec["price_min"] == 0
+    assert errs == [] and rec["starts_at"] == "2031-10-14T18:30:00+01:00" and rec["city"] == "London" and rec["price_min"] == 0
 
 
 def test_gazetteer_trial_markets():
@@ -237,15 +237,15 @@ def test_multi_region_source_reads_the_country_from_the_row():
     """Trials 2026-10: a GB+IE source normalised every row with its first region, so a Dublin meetup became GB (and London
     time); a DE/PL/NL board priced Polish salaries in EUR."""
     n = Normalizer(templates.get("events"), source_id="m", region="GB", regions_=["GB", "IE"], fx=FxTable({"GBP": 0.75, "EUR": 0.88}))
-    rec, errs, _ = n.normalize({"source_id": "1", "url": "https://m.example/1", "title": "Kafka meetup", "starts_at": "8 Oct 2026 18:00",
+    rec, errs, _ = n.normalize({"source_id": "1", "url": "https://m.example/1", "title": "Kafka meetup", "starts_at": "8 Oct 2031 18:00",
                                 "city": "Dublin", "price_min": "10"})
-    assert errs == [] and rec["country"] == "IE" and rec["currency"] == "EUR" and rec["starts_at"] == "2026-10-08T18:00:00+01:00"
-    rec, _, _ = n.normalize({"source_id": "2", "url": "https://m.example/2", "title": "PyData", "starts_at": "8 Oct 2026 18:00",
+    assert errs == [] and rec["country"] == "IE" and rec["currency"] == "EUR" and rec["starts_at"] == "2031-10-08T18:00:00+01:00"
+    rec, _, _ = n.normalize({"source_id": "2", "url": "https://m.example/2", "title": "PyData", "starts_at": "8 Oct 2031 18:00",
                              "location": "Shoreditch, London", "price_min": "10"})
     assert rec["country"] == "GB" and rec["currency"] == "GBP"
-    rec, _, warns = n.normalize({"source_id": "3", "url": "https://m.example/3", "title": "Online", "starts_at": "2026-10-08", "price_min": "10"})
+    rec, _, warns = n.normalize({"source_id": "3", "url": "https://m.example/3", "title": "Online", "starts_at": "2031-10-08", "price_min": "10"})
     assert rec["country"] is None and rec["currency"] is None and rec["price_min_report"] is None and any(w.startswith("country") for w in warns)
-    rec, _, _ = n.normalize({"source_id": "4", "url": "https://m.example/4", "title": "X", "starts_at": "2026-10-08", "country": "Ireland"})
+    rec, _, _ = n.normalize({"source_id": "4", "url": "https://m.example/4", "title": "X", "starts_at": "2031-10-08", "country": "Ireland"})
     assert rec["country"] == "IE"
     jobs = Normalizer(templates.get("jobs"), source_id="w", region="NL", regions_=["NL", "DE", "PL"], fx=FxTable({"EUR": 0.88, "PLN": 3.85}))
     rec, _, _ = jobs.normalize({"source_id": "j", "url": "https://w.example/j", "title": "Java dev", "city": "Warszawa", "salary_min": "20 000"})

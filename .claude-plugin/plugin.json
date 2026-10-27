@@ -1,6 +1,6 @@
 {
   "name": "harvest",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Regions + target in, clean data out: agent-driven census of every site in the regions, review-gated scrapers, polite collection, normalisation, storage and scheduling.",
   "author": {
     "name": "harvest-ai contributors",

@@ -5,6 +5,8 @@ All notable changes to harvest-ai are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-27
+
 ### Removed
 - robots.txt and website terms of service are no longer rules in harvest. The HTTP client no longer reads robots.txt
   before a request or a render (no `robots_denied` stat or event, no `respect_robots` / `max_crawl_delay` options, no

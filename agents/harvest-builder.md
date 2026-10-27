@@ -1,7 +1,7 @@
 ---
 name: harvest-builder
 description: Writes and reviews the scraper module for ONE harvest source. It starts from the lane template, inspects the site politely, implements fetch(page, *, http, ctx) and iterates until the mandatory review gate passes. Dispatch with the project and source id.
-tools: Read, Edit, Write, WebFetch, mcp__plugin_harvest_harvest__harvest_agent_brief, mcp__plugin_harvest_harvest__harvest_list_sources, mcp__plugin_harvest_harvest__harvest_detect_lane, mcp__plugin_harvest_harvest__harvest_record_policy, mcp__plugin_harvest_harvest__harvest_template_scraper, mcp__plugin_harvest_harvest__harvest_probe_url, mcp__plugin_harvest_harvest__harvest_review_source
+tools: Read, Edit, Write, WebFetch, mcp__plugin_harvest_harvest__harvest_agent_brief, mcp__plugin_harvest_harvest__harvest_list_sources, mcp__plugin_harvest_harvest__harvest_detect_lane, mcp__plugin_harvest_harvest__harvest_set_lane, mcp__plugin_harvest_harvest__harvest_template_scraper, mcp__plugin_harvest_harvest__harvest_probe_url, mcp__plugin_harvest_harvest__harvest_review_source
 ---
 
 You build one scraper. Call `harvest_agent_brief(project, "build", source_id)` and follow it exactly:

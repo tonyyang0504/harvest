@@ -22,6 +22,8 @@ from typing import Any, Iterable
 
 REPLACE_MIN_FRACTION = 0.6
 
+# sources.robots_status / terms_status / terms_url / terms_clause are legacy columns: robots.txt and terms verdicts are no
+# longer gates, nothing reads or writes them, and they stay only so databases created by older versions still open.
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS sources (
         project TEXT NOT NULL, id TEXT NOT NULL, name TEXT, url TEXT, domain TEXT, regions TEXT, angles TEXT, kind TEXT,
@@ -285,8 +287,8 @@ class Store:
         return json.dumps(v, ensure_ascii=False, default=str) if isinstance(v, (dict, list)) else v
 
     # ---------------------------------------------------------------- sources
-    SOURCE_COLS = ["name", "url", "domain", "regions", "angles", "kind", "evidence", "status", "lane", "lane_detail", "robots_status",
-                   "terms_status", "terms_url", "terms_clause", "enabled", "module_sha", "reviewed_sha", "review_verdict", "field_map",
+    SOURCE_COLS = ["name", "url", "domain", "regions", "angles", "kind", "evidence", "status", "lane", "lane_detail",
+                   "enabled", "module_sha", "reviewed_sha", "review_verdict", "field_map",
                    "max_pages", "time_budget_s", "cadence_hours", "rate_s", "use_proxy", "notes", "baseline"]
 
     def upsert_source(self, project: str, sid: str, fields: dict) -> None:

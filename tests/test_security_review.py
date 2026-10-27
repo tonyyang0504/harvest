@@ -147,7 +147,7 @@ async def test_mcp_server_enforces_the_agent_allowlist(monkeypatch):
     assert not (await mcp_server.harvest_ua_status(p.name)).is_error
 
 
-# ---------------------------------------------------------------- S6: agents cannot loosen policy
+# ---------------------------------------------------------------- S6: agents cannot open a lane none
 def _policy_source(p, **fields):
     from harvest_ai import census
     sid = census.add(p, [{"url": "https://shop.example.kz/cars", "regions": ["KZ"],
@@ -156,48 +156,45 @@ def _policy_source(p, **fields):
     return sid
 
 
-def test_agent_cannot_lift_forbids_or_open_a_none_lane():
+def test_agent_cannot_open_a_none_lane():
     from harvest_ai import service
     p = make_project()
-    sid = _policy_source(p, lane="none", status="lane_none", robots_status="allowed", terms_status="forbids",
-                         lane_detail={"reason": "terms forbid automated collection"})
+    sid = _policy_source(p, lane="none", status="lane_none", lane_detail={"reason": "content is behind a login"})
     agent = "agent:build"
     with pytest.raises(PermissionError):
-        service.record_policy(p.name, sid, terms_status="allowed", terms_url="https://shop.example.kz/terms", lane="html", actor=agent)
-    p.store.upsert_source(p.name, sid, {"terms_status": "unknown", "lane_detail": {"reason": "content is behind a login"}})
-    with pytest.raises(PermissionError):
-        service.record_policy(p.name, sid, lane="html", reason="looks public", actor=agent)
+        service.set_lane(p.name, sid, "html", reason="looks public", actor=agent)
     src = p.store.get_source(p.name, sid)
-    assert src["lane"] == "none" and src["terms_status"] == "unknown"
-    # an agent can still make things stricter
-    service.record_policy(p.name, sid, terms_status="forbids", terms_url="https://shop.example.kz/terms", actor=agent)
-    assert p.store.get_source(p.name, sid)["terms_status"] == "forbids"
-    # the operator keeps the override (heuristic false positives happen), and it is attributed
-    service.record_policy(p.name, sid, terms_status="no_clause", terms_url="https://shop.example.kz/terms", lane="html", reason="read it")
+    assert src["lane"] == "none" and src["status"] == "lane_none"
+    # an agent may move a collectable source between lanes, and may make it stricter
+    p.store.upsert_source(p.name, sid, {"lane": "feed", "status": "lane_detected"})
+    assert service.set_lane(p.name, sid, "json_api", reason="products.json", actor=agent)["source"]["lane"] == "json_api"
+    assert service.set_lane(p.name, sid, "none", reason="a login wall after page 1", actor=agent)["source"]["lane"] == "none"
+    # the operator keeps the override, and it is attributed
+    service.set_lane(p.name, sid, "html", reason="checked it by hand")
     src = p.store.get_source(p.name, sid)
-    assert src["lane"] == "html" and src["lane_detail"]["policy"]["by"] == "operator"
+    assert src["lane"] == "html" and src["lane_detail"]["override"]["by"] == "operator"
 
 
-def test_agent_terms_verdict_must_cite_the_sources_own_site():
+def test_agent_cannot_open_an_undetected_lane():
     from harvest_ai import service
     p = make_project()
-    sid = _policy_source(p, lane="html", status="lane_detected", robots_status="allowed", terms_status="unknown")
+    sid = _policy_source(p, status="candidate")
     with pytest.raises(PermissionError):
-        service.record_policy(p.name, sid, terms_status="allowed", terms_url="https://elsewhere.example.com/terms", actor="agent:audit")
-    # on-site, but the page cannot be fetched (O6: the cited page is re-read), so the verdict stays unknown
-    with pytest.raises(ValueError):
-        service.record_policy(p.name, sid, terms_status="no_clause", terms_url="https://www.shop.example.kz/legal", actor="agent:audit")
-    assert p.store.get_source(p.name, sid)["terms_status"] == "unknown"
+        service.set_lane(p.name, sid, "html", actor="agent:build")
+    assert p.store.get_source(p.name, sid)["lane"] is None
 
 
 @pytest.mark.asyncio
-async def test_mcp_record_policy_runs_as_the_agent(monkeypatch):
+async def test_mcp_set_lane_runs_as_the_agent(monkeypatch):
     from harvest_ai import mcp_server
     p = make_project()
-    sid = _policy_source(p, lane="none", status="lane_none", robots_status="allowed", terms_status="forbids")
-    monkeypatch.setenv("HARVEST_AGENT_KIND", "audit")
-    res = await mcp_server.harvest_record_policy(p.name, sid, "allowed", "https://shop.example.kz/terms", None, "html", "x")
-    assert res.is_error and p.store.get_source(p.name, sid)["terms_status"] == "forbids"
+    sid = _policy_source(p, lane="none", status="lane_none", lane_detail={"reason": "content is behind a paywall"})
+    monkeypatch.setenv("HARVEST_AGENT_KIND", "build")
+    res = await mcp_server.harvest_set_lane(p.name, sid, "html", "x")
+    assert res.is_error and p.store.get_source(p.name, sid)["lane"] == "none"
+    monkeypatch.setenv("HARVEST_AGENT_KIND", "audit")  # not an audit agent's tool at all
+    res = await mcp_server.harvest_set_lane(p.name, sid, "none", "x")
+    assert res.is_error and "not available" in res.content[0].text
 
 
 # ---------------------------------------------------------------- S7: SSRF
@@ -242,7 +239,7 @@ def test_connection_is_pinned_against_dns_rebinding(cars, monkeypatch):
         ip = "93.184.215.14" if calls["n"] <= 2 else "127.0.0.1"  # the two gate checks see public; the connection sees loopback
         return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, port))]
     monkeypatch.setattr(_socket, "getaddrinfo", flip)
-    http = Http(allow_private=False, respect_robots=False, retries=0, timeout=3)
+    http = Http(allow_private=False, retries=0, timeout=3)
     try:
         assert http.get_text(f"http://rebind.example:{port}/cars") is None
         assert any(e["event"] == "gated" and "connect time" in e.get("reason", "") for e in http.events), http.events

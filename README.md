@@ -9,14 +9,13 @@ in PT and ES. harvest then does the rest:
    each discovery angle in every local language. A completeness critic and an adversarial audit
    check the result. Every source needs evidence.
 2. **Lanes.** harvest decides how each source may be collected: an API through a configured MCP
-   server, OpenAPI, a feed or sitemap, embedded JSON, plain HTML, or a headless browser. If robots.txt
-   or the terms forbid collection, or the site needs a login, a captcha or a paywall, the lane is
-   `none`.
+   server, OpenAPI, a feed or sitemap, embedded JSON, plain HTML, or a headless browser. If the site
+   needs a login, a captcha or a paywall, or shows a bot challenge, the lane is `none`.
 3. **Scrapers.** An agent writes one `fetch(page, *, http, ctx)` module per source from a template.
    A scripted **review gate** checks it: compile and AST policy lint, a sandboxed page-1 fetch and
    schema validation. The verdict is bound to the module's sha256.
 4. **Collection.** harvest fetches politely: one request at a time per host, rate limits, backoff
-   that escalates on 429, a per-URL budget and robots.txt. It tracks pagination and completeness.
+   that escalates on 429 and a per-URL budget. It tracks pagination and completeness.
 5. **Normalisation.** Numbers are parsed per locale (万 / 만 / lakh / crore included). Currencies
    are detected and converted with FX. Units and rent or salary periods are converted. Duplicates
    are removed within and across sources, sanity bounds are applied, and failing rows go to a
@@ -63,9 +62,9 @@ another) with an explicit tool allowlist; everything else works without one.
 
 ## Limits (honest list)
 
-- **Collection is only as allowed as the site says.** harvest reads robots.txt and looks for terms that forbid
-  automated collection with a keyword heuristic; it does not give legal advice. Review the verdicts for sources that
-  matter, and respect each site's terms and local law (personal data in particular).
+- **Deciding what to collect is yours.** harvest does not check robots.txt or a site's terms of service and gives no
+  legal advice. Decide per source what you may collect under the site's terms and local law (personal data in
+  particular), and set unwanted sources to lane `none` (`harvest lane <project> <id> none`).
 - **No circumvention.** A bot challenge, a login, a captcha or a paywall makes the lane `none`; harvest never works
   around them. Many large portals block datacenter IPs; an operator may opt in to a residential-proxy route for plain
   IP blocks only, per source, with a recorded reason.

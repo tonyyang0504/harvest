@@ -55,11 +55,8 @@ class CandidatesIn(BaseModel):
     round_label: str = "manual"
 
 
-class PolicyIn(BaseModel):
-    terms_status: str | None = None
-    terms_url: str | None = None
-    terms_clause: str | None = None
-    lane: str | None = None
+class LaneIn(BaseModel):
+    lane: str
     reason: str | None = None
 
 
@@ -218,9 +215,9 @@ def api_router() -> APIRouter:
     def detect_one(p: str, sid: str, wait: bool = False):
         return service.start_job(p, "detect_lanes", {"source_id": sid}, wait=wait)
 
-    @r.post("/projects/{p}/sources/{sid}/policy")
-    def policy(p: str, sid: str, body: PolicyIn):
-        return service.record_policy(p, sid, **body.model_dump())
+    @r.post("/projects/{p}/sources/{sid}/lane")
+    def set_lane(p: str, sid: str, body: LaneIn):
+        return service.set_lane(p, sid, body.lane, body.reason)
 
     @r.post("/projects/{p}/sources/{sid}/scaffold")
     def scaffold(p: str, sid: str, overwrite: bool = False):

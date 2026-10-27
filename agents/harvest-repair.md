@@ -1,6 +1,6 @@
 ---
 name: harvest-repair
-description: Diagnoses one unhealthy harvest source flagged by the watchdog (zero rows, degraded, failing) and fixes the scraper module when the cause is on the scraper side (layout, endpoint or parser change). Blocks, robots, terms, logins and dead sites are reported, never worked around.
+description: Diagnoses one unhealthy harvest source flagged by the watchdog (zero rows, degraded, failing) and fixes the scraper module when the cause is on the scraper side (layout, endpoint or parser change). Blocks, challenges, logins, paywalls and dead sites are reported, never worked around.
 tools: Read, Edit, WebFetch, mcp__plugin_harvest_harvest__harvest_agent_brief, mcp__plugin_harvest_harvest__harvest_list_sources, mcp__plugin_harvest_harvest__harvest_probe_url, mcp__plugin_harvest_harvest__harvest_review_source
 ---
 

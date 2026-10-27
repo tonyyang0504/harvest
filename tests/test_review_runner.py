@@ -58,16 +58,26 @@ def test_review_passes_and_binds_sha(cars):
     assert p.store.count_records(p.name, sid) == 0
 
 
-def test_enable_refuses_without_policy(cars):
-    p = make_project()
-    sid = add_source(p, cars.url + "/cars")
-    p.module_path(sid).write_text(CAR_MODULE, encoding="utf-8")
-    p.store.upsert_source(p.name, sid, {"lane": "html", "robots_status": "allowed", "terms_status": "unknown"})
-    assert review.review(p, sid, timeout_s=60)["verdict"] == "pass"
-    refused = review.enable(p, sid)["refused"]
-    assert any("terms status is unknown" in r for r in refused)
-    p.store.upsert_source(p.name, sid, {"lane": "none"})
-    assert any("lane is none" in r for r in review.enable(p, sid)["refused"])
+def test_enable_gate_is_the_lane_and_the_review_only():
+    """robots.txt and terms are no gate: a site whose robots.txt says `Disallow: /` and whose terms forbid automated
+    collection is detected, reviewed and enabled like any other. Lane none and a missing review still refuse."""
+    from harvest_ai import lanes
+    s = start(cars_site(terms_text="You may not use robots, scrapers or other automated means to access the site.",
+                        extra_robots="User-agent: harvest-bot\nDisallow: /\n\nUser-agent: *\nDisallow: /"))
+    try:
+        p = make_project()
+        sid = add_source(p, s.url + "/cars")
+        out = lanes.detect_for_source(p, sid, use_mcp=False)
+        assert out["lane"] not in (None, "none") and "terms" not in out
+        p.module_path(sid).write_text(CAR_MODULE, encoding="utf-8")
+        assert any("no passing review" in r for r in review.enable(p, sid)["refused"])
+        assert review.review(p, sid, timeout_s=60)["verdict"] == "pass"
+        assert review.enable(p, sid) == {"id": sid, "enabled": True, "module_sha": sandbox.sha256_file(p.module_path(sid))}
+        assert runner.run_source(p, sid)["rows_stored"] > 0
+        p.store.upsert_source(p.name, sid, {"lane": "none"})
+        assert review.enable(p, sid)["refused"] == ["lane is none"]
+    finally:
+        s.server.shutdown()
 
 
 def _review_module(p, url, code):
@@ -262,7 +272,7 @@ def test_cross_source_duplicates_and_distinct_query(cars):
 
 def test_walk_logic_unit():
     class H:
-        stats = {"errors": 0, "blocked": 0, "gated": 0, "robots_denied": 0}
+        stats = {"errors": 0, "blocked": 0, "gated": 0}
     pages = {1: [{"source_id": "a"}, {"source_id": "b"}], 2: [{"source_id": "b"}], 3: [{"source_id": "b"}], 4: [{"source_id": "c"}]}
     ev = []
     res = sandbox.walk(lambda page, http, ctx: pages.get(page, []), http=H(), ctx={}, max_pages=10, max_rows=100, emit=ev.append)

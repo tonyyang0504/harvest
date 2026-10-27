@@ -51,9 +51,9 @@ const post = (path, data = {}) => api(path, { method: "POST", body: JSON.stringi
 
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 4500); }
 function chip(s) {
-  const cls = { ok: "ok", enabled: "ok", pass: "ok", done: "ok", allowed: "ok", reviewed: "ok", no_clause: "ok", partial: "warn", running: "warn", queued: "warn", degraded: "warn",
+  const cls = { ok: "ok", enabled: "ok", pass: "ok", done: "ok", reviewed: "ok", partial: "warn", running: "warn", queued: "warn", degraded: "warn",
     scaffolded: "warn", lane_detected: "warn", unknown: "warn", candidate: "", empty: "bad", error: "bad", failed: "bad", fail: "bad", none: "bad", lane_none: "bad",
-    forbids: "bad", rejected: "bad", review_failed: "bad", review_stale: "bad", disallowed: "bad", timeout: "bad", stuck: "bad", lost: "bad", blocked: "bad" }[s] ?? "";
+    rejected: "bad", review_failed: "bad", review_stale: "bad", timeout: "bad", stuck: "bad", lost: "bad", blocked: "bad" }[s] ?? "";
   return `<span class="chip ${cls}">${esc(s ?? "—")}</span>`;
 }
 function table(cols, rows, render, empty = "Nothing yet.") {
@@ -209,7 +209,7 @@ function proxyPanel(px) {
   const d = px.decision || {}, t = px.today || {}, by = px.usage_7d_by_source || {};
   const pct = t.daily_bytes ? Math.min(100, Math.round((100 * (t.used_bytes || 0)) / t.daily_bytes)) : 0;
   return `<div class="panel" style="margin-top:16px" id="proxy-panel"><h2 style="margin-top:0">Residential proxy</h2>
-   <p class="muted">Used only after an IP-level block (403/401 without a challenge page, a connection reset, a persistent 429), for sources whose robots and terms allow collection. Never for captchas, bot challenges, logins or paywalls.</p>
+   <p class="muted">Used only after an IP-level block (403/401 without a challenge page, a connection reset, a persistent 429). Never for captchas, bot challenges, logins or paywalls.</p>
    <div class="row"><span>${px.pool_configured ? "pool configured" : "no pool configured (HARVEST_PROXY_FILE / HARVEST_PROXY_URL)"}</span>
      <span>project: ${chip(d.enabled ? "enabled" : "off")}</span>${d.reason ? `<span class="muted decision">${esc(d.reason)} · ${when(d.at)} · ${esc(d.by || "")}</span>` : ""}
      <span style="flex:1"></span>
@@ -223,7 +223,7 @@ function uaPanel(ua) {
   if (!ua) return "";
   const d = ua.decision || {};
   return `<div class="panel" style="margin-top:16px" id="ua-panel"><h2 style="margin-top:0">Browser user agent</h2>
-   <p class="muted">Sends a desktop Chrome user agent instead of harvest's own, for sites that refuse non-browser agents. Only the header changes: challenges, captchas, logins and paywalls still stop a source; robots.txt is checked for harvest and for *, the stricter wins.</p>
+   <p class="muted">Sends a desktop Chrome user agent instead of harvest's own, for sites that refuse non-browser agents. Only the header changes: challenges, captchas, logins and paywalls still stop a source.</p>
    <div class="row"><span>project: ${chip(d.enabled ? "enabled" : "off")}</span>${d.reason ? `<span class="muted decision">${esc(d.reason)} · ${when(d.at)} · ${esc(d.by || "")}</span>` : ""}
      <span style="flex:1"></span>${d.enabled ? `<button class="small ghost" data-ua="off">Switch off</button>` : `<button class="small" data-ua="on">Switch on…</button>`}</div></div>`;
 }
@@ -262,15 +262,15 @@ function why(text, label, cls = "") {
 
 async function sources(name) {
   const { sources } = await api(`/projects/${enc(name)}/sources`);
-  const html = `<p class="muted">Approve a source once its review passes. A source is never collected while its lane is none (robots, terms, login, captcha or paywall).</p>` +
-    table(["Source", "Regions", "Status", "Lane", "Robots · terms · review", "Records", "Proxy", "UA", "Actions"], sources, (x) => {
+  const html = `<p class="muted">Approve a source once its review passes. A source is never collected while its lane is none (login, captcha, paywall or bot challenge).</p>` +
+    table(["Source", "Regions", "Status", "Lane", "Review", "Records", "Proxy", "UA", "Actions"], sources, (x) => {
       const laneOk = x.lane && x.lane !== "none", rejected = x.status === "rejected", id = esc(x.id);
       const px = x.proxy || {}, ua = x.ua || {};
       return `<tr data-source="${id}">
       <td class="src">${link(x.url, esc(x.name || x.id))}<div class="muted">${id}</div></td>
       <td>${esc((x.regions || []).join(", "))}</td><td class="status">${chip(x.status)}</td>
       <td class="lane">${chip(x.lane)}${why(x.lane_reason)}</td>
-      <td class="policy"><div class="chips">${chip(x.robots_status)}${chip(x.terms_status)}<span class="review">${chip(x.review_verdict)}</span></div></td>
+      <td class="policy"><div class="chips"><span class="review">${chip(x.review_verdict)}</span></div></td>
       <td class="num">${fmt(x.records)}</td>
       <td class="proxy">${chip(px.switched_on ? "enabled" : "off")}${px.via_proxy ? why("lane via proxy") : px.ip_block ? why("IP-blocked") : ""}
         ${px.switched_on && px.eligible === false ? why(px.why || "gate closed", "not used", "gate") : ""}

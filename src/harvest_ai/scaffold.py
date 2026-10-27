@@ -3,8 +3,8 @@
 Contract (checked by the review gate):
     def fetch(page: int, *, http, ctx) -> list[dict]
       page  1-based; page 1 is the newest / first listing page
-      http  harvest_ai.http.Http: get_text / get_json / post_json / render; returns None on block,
-            robots denial or error. It is the only way out to the network (politeness, robots).
+      http  harvest_ai.http.Http: get_text / get_json / post_json / render; returns None on block
+            or error. It is the only way out to the network (URL gate, politeness).
       ctx   {"source": {...registry row...}, "project": {...spec...}, "fields": {...template fields...},
              "region": "KZ", "currency": "KZT", "state": {}}  -- `state` persists across pages of one run
     Return a list of dicts keyed by template field names (raw strings are fine: the normaliser parses
@@ -146,7 +146,7 @@ def fetch(page, *, http, ctx):
     return rows
 ''',
     "json_api": '''
-API_URL = SOURCE_URL  # TODO: the site's public JSON list endpoint (no key, no login; robots.txt must allow it)
+API_URL = SOURCE_URL  # TODO: the site's public JSON list endpoint (no key, no login)
 PER_PAGE = 50
 
 def fetch(page, *, http, ctx):

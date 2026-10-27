@@ -17,15 +17,20 @@ def _http(**kw):
     return Http(**kw)
 
 
-def test_robots_denial_and_basic_get(site):
-    site.route("/robots.txt", (200, {"content-type": "text/plain"}, "User-agent: *\nDisallow: /secret\n"))
+def test_robots_txt_never_stops_a_request(site):
+    """robots.txt is not a rule: a `Disallow: /` (or a robots.txt that answers 500) does not stop a request, and the
+    client never fetches robots.txt on its own."""
+    site.route("/robots.txt", (200, {"content-type": "text/plain"}, "User-agent: *\nDisallow: /\nCrawl-delay: 30\n"))
     site.route("/ok", "<p>hi</p>" * 50)
-    site.route("/secret", "nope")
+    site.route("/secret", "<p>listed</p>" * 50)
     h = _http()
+    t0 = time.monotonic()
     assert "hi" in h.get_text(site.url + "/ok")
-    assert h.get_text(site.url + "/secret") is None and h.stats["robots_denied"] == 1
-    assert "/secret" not in site.paths()
-    assert site.count("/robots.txt") == 1  # cached per host
+    assert "listed" in h.get_text(site.url + "/secret") and "/secret" in site.paths()
+    assert time.monotonic() - t0 < 5  # no Crawl-delay
+    assert site.count("/robots.txt") == 0 and "robots_denied" not in h.stats
+    site.route("/robots.txt", (500, {}, "err"))
+    assert "listed" in _http().get_text(site.url + "/secret")
 
 
 def test_per_host_concurrency_is_one(site):
@@ -211,7 +216,7 @@ def _lane(site, body_html, terms="Be nice.", robots="User-agent: *\nDisallow: /p
 
 def test_lane_html(site):
     r = _lane(site, html_page(FILLER + "<a href='/terms'>Terms and conditions</a>"))
-    assert r["lane"] == "html" and r["robots_status"] == "allowed" and r["terms"]["status"] == "no_clause" and r["terms"]["url"].endswith("/terms")
+    assert r["lane"] == "html" and "terms" not in r and "robots_status" not in r
 
 
 def test_lane_embedded_json(site):
@@ -246,20 +251,16 @@ def test_lane_feed_and_openapi_and_sitemap(site):
 
 def test_lane_when_the_source_url_is_itself_a_json_document_or_a_feed(site):
     """Trials 2026-10: arbeitnow.com's job API, jobs.booking.com/api/jobs and a JSON file of conferences were labelled lane
-    `html` ("HTML"); germantechjobs.de/rss (the RSS feed itself) was labelled `sitemap`. Their terms were never found."""
+    `html` ("HTML"); germantechjobs.de/rss (the RSS feed itself) was labelled `sitemap`."""
     home = html_page(FILLER + "<a href='/terms'>Terms of use</a>")
-    terms = "Do not scrape or crawl this site with automated means."
     api = {"data": [{"slug": f"job-{i}", "title": "Software Engineer"} for i in range(5)], "links": {"next": "/api?page=2"}}
     r = _lane(site, (200, {"content-type": "application/json"}, json.dumps(api)), terms="Be nice.", extra_routes={"/": home})
     assert r["lane"] == "json_api" and r["signals"]["json_items"] == 5 and "JSON document" in r["reason"]
-    assert r["terms"]["status"] == "no_clause" and r["terms"]["url"].endswith("/terms")  # found through the home page
     r = _lane(site, (200, {"content-type": "text/plain"}, json.dumps([{"name": "JSConf", "country": "U.K."}] * 3)), extra_routes={"/": home})
     assert r["lane"] == "json_api" and r["signals"]["json_items"] == 3
     rss = '<?xml version="1.0"?><rss version="2.0"><channel>' + "".join(f"<item><title>Job {i}</title><link>/j/{i}</link></item>" for i in range(4)) + "</channel></rss>"
     r = _lane(site, (200, {"content-type": "application/rss+xml"}, rss), extra_routes={"/": home})
     assert r["lane"] == "feed" and r["signals"]["feed_items"] == 4
-    r = _lane(site, (200, {"content-type": "application/json"}, json.dumps(api)), terms=terms, extra_routes={"/": home})
-    assert r["lane"] == "none" and r["terms"]["status"] == "forbids"  # the home page's terms still bind a JSON endpoint
 
 
 def test_builders_can_record_the_json_api_lane_and_scaffold_it(site):
@@ -270,9 +271,9 @@ def test_builders_can_record_the_json_api_lane_and_scaffold_it(site):
     from harvest_ai import scaffold
     p = make_project("phones", "products", ("IN",), target="used smartphones")
     sid = add_source(p, site.url + "/collections/phones", regions=("IN",))
-    p.store.upsert_source(p.name, sid, {"lane": "feed", "robots_status": "allowed", "terms_status": "no_clause", "status": "lane_detected"})
-    s = lanes.record_policy(p, sid, lane="json_api", reason="Shopify products.json carries every product; the .atom feed only the newest 25")
-    assert s["lane"] == "json_api" and s["lane_detail"]["override"].startswith("Shopify")
+    p.store.upsert_source(p.name, sid, {"lane": "feed", "status": "lane_detected"})
+    s = lanes.set_lane(p, sid, "json_api", reason="Shopify products.json carries every product; the .atom feed only the newest 25", actor="agent:build")
+    assert s["lane"] == "json_api" and s["lane_detail"]["override"]["reason"].startswith("Shopify")
     out = scaffold.template(p, sid)
     assert out["lane"] == "json_api" and "get_json(API_URL" in out["code"]
     compile(out["code"], "m.py", "exec")
@@ -283,28 +284,48 @@ def test_lane_browser_for_js_shells(site):
     assert r["lane"] == "browser"
 
 
-@pytest.mark.parametrize("terms,why", [
-    ("You may not use robots, spiders or scrapers to access the site.", "terms"),
-    ("Es ist untersagt, die Inhalte automatisiert auszulesen (Crawler).", "terms"),
-    ("Запрещается автоматизированный сбор данных с сайта.", "terms"),
-    ("Queda prohibido el uso de robots o scraping.", "terms"),
-    ("本サイトへのスクレイピングは禁止します。", "terms"),
+@pytest.mark.parametrize("terms", [
+    "You may not use robots, spiders or scrapers to access the site.",
+    "Es ist untersagt, die Inhalte automatisiert auszulesen (Crawler).",
+    "Запрещается автоматизированный сбор данных с сайта.",
+    "本サイトへのスクレイピングは禁止します。",
 ])
-def test_lane_none_when_terms_forbid(site, terms, why):
+def test_terms_that_forbid_collection_do_not_make_the_lane_none(site, terms):
+    """Terms of service are not a rule: a terms page that forbids automated collection is neither read nor recorded."""
     r = _lane(site, html_page(FILLER + "<a href='/terms'>Terms</a>"), terms=terms)
-    assert r["lane"] == "none" and why in r["reason"] and r["terms"]["status"] == "forbids" and r["terms"]["clause"]
+    assert r["lane"] == "html" and "terms" not in r and "/terms" not in site.paths()
 
 
-def test_lane_none_for_robots_login_and_blocks(site):
-    r = _lane(site, html_page(FILLER), robots="User-agent: *\nDisallow: /list\n")
-    assert r["lane"] == "none" and "robots" in r["reason"] and "/list" not in site.paths()
+def test_robots_disallow_does_not_make_the_lane_none(site):
+    sm = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>/item/1</loc></url></urlset>'
+    r = _lane(site, html_page(FILLER), robots="User-agent: *\nDisallow: /\nSitemap: " + site.url + "/sm.xml\n",
+              extra_routes={"/sm.xml": (200, {"content-type": "application/xml"}, sm)})
+    assert r["lane"] == "sitemap" and "/list" in site.paths()
+    assert r["signals"]["sitemap"]["url"] == site.url + "/sm.xml"  # robots.txt still names the sitemaps
+    site.route("/robots.txt", (500, {}, "err"))  # an unreachable robots.txt is no block either
+    r = lanes.detect(site.url + "/list", http=_http(), use_mcp=False)
+    assert r["lane"] == "html"
+
+
+def test_lane_none_for_login_captcha_paywall_challenge_and_blocks(site):
     r = _lane(site, html_page("<form><input type='password' name='p'></form><p>Please log in to see the ads</p>"))
     assert r["lane"] == "none" and "login" in r["reason"]
+    r = _lane(site, html_page("<p>Subscribe to continue reading. Subscribers only.</p>"))
+    assert r["lane"] == "none" and "paywall" in r["reason"]
+    r = _lane(site, html_page("<h1>Are you a human?</h1><div class='g-recaptcha'>captcha</div>"))
+    assert r["lane"] == "none" and "challenge" in r["reason"]
+    # a bot-wall interstitial served with HTTP 200
+    r = _lane(site, (200, {"content-type": "text/html"}, "<html><head><title>Just a moment...</title></head><body>"
+                     "<script src='/cdn-cgi/challenge-platform/h/b/orchestrate/jsch/v1'></script></body></html>"))
+    assert r["lane"] == "none" and "challenge" in r["reason"]
+    r = _lane(site, (200, {"content-type": "text/html"}, "<html><body><script src='/_Incapsula_Resource?x=1'></script></body></html>"))
+    assert r["lane"] == "none" and "challenge" in r["reason"]
     r = _lane(site, (403, {"content-type": "text/html"}, "denied"))
     assert r["lane"] == "none" and "blocked" in r["reason"]
-    site.route("/robots.txt", (500, {}, "err"))
-    r = lanes.detect(site.url + "/list", http=_http(), use_mcp=False)
-    assert r["lane"] == "none" and "unreachable" in r["reason"]
+    # robots.txt and terms that allow everything do not open any of these
+    r = _lane(site, html_page("<p>Please log in to see the ads</p><input type='password'>"), robots="User-agent: *\nAllow: /\n",
+              terms="Scraping is welcome.")
+    assert r["lane"] == "none" and "login" in r["reason"]
 
 
 def test_lane_via_configured_mcp_server(site, tmp_path, monkeypatch):
@@ -318,65 +339,24 @@ def test_lane_via_configured_mcp_server(site, tmp_path, monkeypatch):
     assert r["lane"] == "mcp" and r["signals"]["mcp"] == [{"server": "cars-api", "how": "declared"}]
 
 
-def test_detect_for_source_and_policy_overrides(site):
+def test_detect_for_source_and_lane_overrides(site):
     p = make_project()
-    site.route("/robots.txt", (200, {}, "User-agent: *\n"))
-    site.route("/list", html_page(FILLER))  # no terms link -> unknown
+    site.route("/robots.txt", (200, {}, "User-agent: *\nDisallow: /\n"))
+    site.route("/list", html_page(FILLER))
     sid = census.add(p, [{"url": site.url + "/list", "regions": ["KZ"], "evidence": [{"url": site.url + "/list", "observation": "ads"}]}])["added"][0]["id"]
     out = service.detect_lane(p.name, sid)
-    assert out["lane"] == "html" and out["terms"]["status"] == "unknown"
+    assert out["lane"] == "html" and "terms" not in out
     src = p.store.get_source(p.name, sid)
-    assert src["status"] == "lane_detected" and src["terms_status"] == "unknown"
+    assert src["status"] == "lane_detected" and src["robots_status"] is None and src["terms_status"] is None
     with pytest.raises(ValueError):
-        lanes.record_policy(p, sid, terms_status="allowed")  # needs the URL read
-    lanes.record_policy(p, sid, terms_status="no_clause", terms_url=site.url + "/about", terms_clause=None)
-    assert p.store.get_source(p.name, sid)["terms_status"] == "no_clause"
-    lanes.record_policy(p, sid, terms_status="forbids", terms_url=site.url + "/about", terms_clause="no bots")
+        lanes.set_lane(p, sid, "api")  # not a lane
+    lanes.set_lane(p, sid, "none", reason="operator: site asked us to stop")
     src = p.store.get_source(p.name, sid)
-    assert src["lane"] == "none" and src["status"] == "lane_none"
-    with pytest.raises(ValueError):
-        lanes.record_policy(p, sid, lane="html")
-
-
-def test_classify_terms_negatives():
-    assert lanes.classify_terms("<p>We love our users. Contact us for API access.</p>")["status"] == "no_clause"
-    assert lanes.classify_terms("<p>You agree not to use any automated means to collect listings.</p>")["status"] == "forbids"
-
-
-def test_terms_link_is_the_footer_terms_not_an_article_slug(site):
-    """Trials 2026-10: projectsegy.com's 'terms' were an article (/cost-conditions-opening-delivery-order-saudi/), and
-    lazada.co.id's terms URL kept a raw '&amp;'."""
-    site.route("/cost-conditions-opening-delivery-order-saudi/", html_page("<p>" + "An article about delivery orders. " * 40 + "</p>"))
-    site.route("/terms-of-use/", html_page("<p>You must not scrape this site with automated means.</p>" + "<p>More.</p>" * 50))
-    body = (FILLER + "<a href='/cost-conditions-opening-delivery-order-saudi/'>How to open a delivery order</a>"
-            "<footer><a href='/terms-of-use/?a=1&amp;b=2'>Terms of Use</a></footer>")
-    r = _lane(site, html_page(body))
-    assert r["terms"]["url"].endswith("/terms-of-use/?a=1&b=2") and r["terms"]["status"] == "forbids" and r["lane"] == "none"
-
-
-def test_pdf_and_binary_terms_are_unknown_not_no_clause(site):
-    """Trials 2026-10: nofluffjobs.com and germantechjobs.de publish their terms as PDFs whose text forbids collection;
-    the heuristic read the binary as 'no_clause', which the enable gate accepts."""
-    pdf = "%PDF-1.4\n%\ufffd\ufffd\ufffd\ufffd\n1 0 obj\n<</Title (Terms)/Filter /FlateDecode>>stream\nx\ufffd\x03\x01" + "\ufffd\x07" * 500
-    assert lanes.classify_terms(pdf)["status"] == "unknown"
-    assert lanes.classify_terms("PK\x03\x04" + "x" * 500)["status"] == "unknown"
-    site.route("/terms.pdf", (200, {"content-type": "application/pdf"}, b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n" + bytes(range(256)) * 20))
-    r = _lane(site, html_page(FILLER + "<a href='/terms.pdf'>Terms and Conditions</a>"))
-    assert r["lane"] == "html" and r["terms"]["status"] == "unknown" and r["terms"]["url"].endswith("/terms.pdf")
-    assert lanes.classify_terms("<p>" + "Ordinary terms text. " * 40 + "</p>")["status"] == "no_clause"
-
-
-@pytest.mark.parametrize("clause", [
-    "Do not scrape or crawl this site with automated means.",  # trials 2026-10: 'do not' was not a prohibition
-    "You don't use bots to collect data from the site.",
-    "Het is niet toegestaan om geautomatiseerde middelen te gebruiken om vacatures te verzamelen.",
-    "Pengguna dilarang menggunakan robot atau perayap otomatis.",
-    "Zakazane jest w szczególności automatyczne pobieranie przez kogokolwiek danych zawartych w Serwisie.",  # justjoin.it §11.3
-    "يحظر استخدام برامج الزحف أو الوسائل الآلية لاستخراج البيانات",
-])
-def test_classify_terms_trial_languages(clause):
-    assert lanes.classify_terms(f"<p>{clause} " + "Other terms. " * 60 + "</p>")["status"] == "forbids"
-    assert lanes.classify_terms("<p>Do not hesitate to contact us. " + "Other terms. " * 60 + "</p>")["status"] == "no_clause"
+    assert src["lane"] == "none" and src["status"] == "lane_none" and not src["enabled"]
+    with pytest.raises(PermissionError):
+        lanes.set_lane(p, sid, "html", actor="agent:build")  # an agent never opens a lane none
+    assert lanes.set_lane(p, sid, "html", reason="operator re-opened it")["lane"] == "html"
+    assert p.store.get_source(p.name, sid)["status"] == "lane_detected"
 
 
 # ---------------------------------------------------------------- regressions from the 2026-09-25 live pilot
@@ -442,26 +422,6 @@ def test_tiny_feeds_do_not_win_the_lane(site):
     r = _lane(site, html_page(FILLER, head=head), extra_routes={"/last.xml": (200, {"content-type": "application/rss+xml"}, rss),
                                                                    "/openapi.json": (404, {}, "")})
     assert r["lane"] == "html" and r["signals"]["feed_items"] == 1
-
-
-def test_redetection_keeps_a_reviewed_terms_verdict(site):
-    """Pilot: re-running lane detection overwrote the auditor's reviewed 'no_clause' verdicts with 'unknown'."""
-    p = make_project()
-    site.route("/robots.txt", (200, {}, "User-agent: *\n"))
-    site.route("/list", html_page(FILLER))  # no terms link: the heuristic says unknown
-    sid = census.add(p, [{"url": site.url + "/list", "regions": ["KZ"], "evidence": [{"url": site.url + "/list", "observation": "ads"}]}])["added"][0]["id"]
-    lanes.record_policy(p, sid, terms_status="no_clause", terms_url=site.url + "/legal", reason="auditor read §1-9")
-    out = service.detect_lane(p.name, sid)
-    src = p.store.get_source(p.name, sid)
-    assert out["terms"]["reviewed"] and src["terms_status"] == "no_clause" and src["terms_url"] == site.url + "/legal" and src["lane"] == "html"
-    # a heuristic 'forbids' still wins over an older permissive verdict
-    site.route("/terms", html_page("<p>You may not use robots or scrapers.</p>"))
-    site.route("/list", html_page(FILLER + "<a href='/terms'>Terms</a>"))
-    assert service.detect_lane(p.name, sid)["lane"] == "none"
-    # and a reviewed 'forbids' keeps the lane none even when the page shows no clause
-    lanes.record_policy(p, sid, terms_status="forbids", terms_url=site.url + "/terms", terms_clause="no robots")
-    site.route("/list", html_page(FILLER))
-    assert service.detect_lane(p.name, sid)["lane"] == "none"
 
 
 def test_operator_can_correct_a_source_url(site):

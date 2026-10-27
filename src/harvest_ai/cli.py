@@ -8,6 +8,7 @@ import os
 import sys
 
 from . import __version__, project, service
+from .lanes import LANES
 
 
 def _out(obj) -> None:
@@ -84,13 +85,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-proxy", action="store_true", help="never arm the residential-proxy route for this detection")
     s.add_argument("--own-ua", action="store_true", help="send harvest's own user agent even where the browser UA mode is on")
 
-    s = sub.add_parser("policy", help="record a terms verdict or lane override")
+    s = sub.add_parser("lane", help="override a source's detected lane")
     s.add_argument("project")
     s.add_argument("source_id")
-    s.add_argument("--terms-status", choices=["allowed", "no_clause", "forbids", "unknown"])
-    s.add_argument("--terms-url")
-    s.add_argument("--terms-clause")
-    s.add_argument("--lane")
+    s.add_argument("lane", choices=list(LANES))
     s.add_argument("--reason")
 
     s = sub.add_parser("probe", help="fetch one URL politely and summarise it")
@@ -165,7 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     x = ps.add_parser("enable", help="switch the route on for a project or one source; the reason is recorded with the date")
     x.add_argument("project")
     x.add_argument("--source", help="one source only (default: the whole project)")
-    x.add_argument("--reason", required=True, help="why (e.g. 'market leader 403s the datacenter IP; terms allow collection')")
+    x.add_argument("--reason", required=True, help="why (e.g. 'market leader 403s the datacenter IP from page 1')")
     x.add_argument("--daily-mb", type=float, help="the project's daily proxied-bandwidth cap in MB")
     x.add_argument("--daily-requests", type=int, help="the project's daily proxied-request cap")
     x.add_argument("--mode", choices=["sticky", "rotate"], help="one stable exit per source, or rotate per request")
@@ -285,8 +283,8 @@ def main(argv: list[str] | None = None) -> int:
             _out(service.reject_source(a.project, a.source_id, a.reason))
         elif c == "detect-lane":
             _out(service.detect_lane(a.project, a.source_id, use_mcp=not a.no_mcp, use_proxy=not a.no_proxy, use_browser_ua=not a.own_ua))
-        elif c == "policy":
-            _out(service.record_policy(a.project, a.source_id, a.terms_status, a.terms_url, a.terms_clause, a.lane, a.reason))
+        elif c == "lane":
+            _out(service.set_lane(a.project, a.source_id, a.lane, a.reason))
         elif c == "probe":
             _out(service.probe_url(a.url, a.max_chars))
         elif c == "scaffold":

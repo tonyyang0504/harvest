@@ -4,14 +4,12 @@ When on for a project or source, its requests send a current stable desktop Chro
 Accept / Accept-Language set (`http.BROWSER_HEADERS`) instead of harvest's own UA; the browser lane uses the
 launched Chromium build's own Chrome UA. That is all it changes. It never spoofs fingerprints, hides
 navigator.webdriver, solves captchas or challenges, or works around logins and paywalls: a challenge page still
-stops the source (lane none). robots.txt is evaluated for harvest's own token AND for `*`, the stricter wins.
+stops the source (lane none).
 
 Gates, like the proxy route (proxy.py) and decided separately from it:
   (a) a recorded operator decision (reason + date) on the project (`project.json` -> `ua`) or the source
       (`lane_detail.ua`); a source-level decision wins;
-  (b) robots allow and the terms verdict is allowed/no_clause (lane detection may also run with an unread verdict
-      so the terms can be read; `forbids` stops it), and the source is not lane none for a login, paywall,
-      captcha or challenge.
+  (b) the source is not lane none for a login, paywall, captcha or challenge.
 Agents have no tool to switch it on; `tune` / `update_source` refuse it.
 """
 
@@ -44,15 +42,6 @@ def eligible(p, src: dict, purpose: str = "run") -> tuple[bool, str]:
     ok, why = switched_on(p, src)
     if not ok:
         return False, why
-    if src.get("robots_status") == "disallowed":
-        return False, "robots.txt disallows the source"
-    terms = src.get("terms_status")
-    if terms == "forbids":
-        return False, "the terms forbid automated collection"
-    if purpose != "detect" and terms not in ("allowed", "no_clause"):
-        return False, f"terms verdict is {terms}; record allowed/no_clause first"
-    if purpose != "detect" and src.get("robots_status") != "allowed":
-        return False, f"robots status is {src.get('robots_status')}"
     reason = ((src.get("lane_detail") or {}).get("reason") or "").lower()
     if any(w in reason for w in ("login", "paywall", "captcha", "challenge")):
         return False, f"lane none for a reason no user agent changes ({reason})"

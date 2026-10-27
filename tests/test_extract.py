@@ -1,67 +1,13 @@
 import pytest
 
-from harvest_ai import extract, robots
-
-ROBOTS = """
-# comment
-User-agent: Googlebot
-Disallow: /
-
-User-agent: harvest-bot
-User-agent: otherbot
-Disallow: /private
-Allow: /private/public$
-Disallow: /*?sort=
-Disallow: /*.pdf$
-Crawl-delay: 3
-
-User-agent: *
-Disallow: /admin
-Sitemap: https://x.test/sitemap.xml
-"""
+from harvest_ai import extract, lanes
 
 
-def test_robots_groups_wildcards_and_delay():
-    r = robots.parse(ROBOTS)
-    ua = "harvest-bot/0.1 (+x)"
-    assert r.can_fetch(ua, "https://x.test/cars?page=2")
-    assert not r.can_fetch(ua, "https://x.test/private/a")
-    assert r.can_fetch(ua, "https://x.test/private/public")
-    assert not r.can_fetch(ua, "https://x.test/private/public/more")
-    assert not r.can_fetch(ua, "https://x.test/list?sort=price")
-    assert not r.can_fetch(ua, "https://x.test/docs/a.pdf") and r.can_fetch(ua, "https://x.test/docs/a.pdf?x=1")
-    assert r.can_fetch(ua, "https://x.test/admin")  # its own group applies, not '*'
-    assert not r.can_fetch("SomeBot/1", "https://x.test/admin")
-    assert not r.can_fetch("Googlebot", "https://x.test/")
-    assert r.crawl_delay(ua) == 3 and r.sitemaps == ["https://x.test/sitemap.xml"]
-    assert r.can_fetch(ua, "https://x.test/robots.txt")
-    s = r.summary(ua, ["https://x.test/private/x"])
-    assert s["checked"] == {"https://x.test/private/x": False} and s["crawl_delay"] == 3
-
-
-def test_robots_repeated_groups_merge_and_exact_token():
-    # trials 2026-10: a second `User-agent: *` group further down the file was ignored, so its disallows were not honoured
-    r = robots.parse("User-agent: *\nDisallow: /admin\nCrawl-delay: 2\n\nUser-agent: Googlebot\nAllow: /\n\n"
-                     "User-agent: *\nDisallow: /jobs/search\nCrawl-delay: 5\n")
-    ua = "harvest-bot/0.1 (+x)"
-    assert not r.can_fetch(ua, "https://x.test/jobs/search?q=python")
-    assert not r.can_fetch(ua, "https://x.test/admin")
-    assert r.can_fetch(ua, "https://x.test/jobs/123") and r.crawl_delay(ua) == 5
-    # two groups for our own token merge too
-    r = robots.parse("User-agent: harvest-bot\nDisallow: /a\n\nUser-agent: *\nDisallow: /\n\nUser-agent: harvest-bot\nDisallow: /b\n")
-    assert not r.can_fetch(ua, "https://x.test/a/1") and not r.can_fetch(ua, "https://x.test/b/1") and r.can_fetch(ua, "https://x.test/c")
-    # a group for another crawler whose name contains ours (or is contained in ours) is not ours: `*` applies
-    r = robots.parse("User-agent: harvest\nAllow: /\n\nUser-agent: bot\nAllow: /\n\nUser-agent: *\nDisallow: /\n")
-    assert not r.can_fetch(ua, "https://x.test/a")
-    assert robots.parse("User-agent: Harvest-Bot/2.0\nDisallow: /x\n").can_fetch(ua, "https://x.test/y")
-    assert not robots.parse("User-agent: Harvest-Bot/2.0\nDisallow: /x\n").can_fetch(ua, "https://x.test/x")
-
-
-def test_robots_fetch_status_semantics():
-    assert robots.from_status(404).can_fetch("a", "https://x/any")
-    assert not robots.from_status(503).can_fetch("a", "https://x/any")
-    assert not robots.from_status(None).can_fetch("a", "https://x/any")
-    assert robots.from_status(200, "User-agent: *\nDisallow:\n").can_fetch("a", "https://x/any")
+def test_robots_txt_is_read_only_for_sitemaps():
+    # robots.txt is no gate: only its Sitemap lines are used (sitemap discovery in lane detection)
+    text = "User-agent: *\nDisallow: /\nCrawl-delay: 30\nSitemap: https://x.test/sitemap.xml # main\nsitemap:https://x.test/s2.xml\nSitemap: /rel.xml\n"
+    assert lanes.robots_sitemaps(text) == ["https://x.test/sitemap.xml", "https://x.test/s2.xml"]
+    assert lanes.robots_sitemaps("") == [] and lanes.robots_sitemaps(None) == []
 
 
 HTML = """<html lang="pt"><head><title>Casas &amp; Apartamentos</title><meta property="og:title" content="OG t">

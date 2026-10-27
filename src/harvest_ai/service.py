@@ -89,7 +89,7 @@ def reject_source(project: str, source_id: str, reason: str) -> dict:
 
 
 def _source_view(p: project_mod.Project, s: dict, detail: bool = False) -> dict:
-    keys = ["id", "name", "url", "domain", "regions", "angles", "status", "lane", "robots_status", "terms_status", "terms_url", "enabled",
+    keys = ["id", "name", "url", "domain", "regions", "angles", "status", "lane", "enabled",
             "review_verdict", "max_pages", "baseline"]
     d = {k: s.get(k) for k in keys}
     d["enabled"] = bool(s.get("enabled"))
@@ -106,7 +106,7 @@ def _source_view(p: project_mod.Project, s: dict, detail: bool = False) -> dict:
     d["last_run"] = {k: last.get(k) for k in ("status", "started_at", "rows_stored", "complete", "write_mode", "error")} if last else None
     d["records"] = p.store.count_records(p.name, s["id"])
     if detail:
-        d.update({k: s.get(k) for k in ("evidence", "lane_detail", "terms_clause", "notes", "field_map", "kind", "reviewed_sha", "module_sha")})
+        d.update({k: s.get(k) for k in ("evidence", "lane_detail", "notes", "field_map", "kind", "reviewed_sha", "module_sha")})
         d["next_due"] = scheduler.next_due(p, s) if s.get("enabled") else None
         d["runs"] = p.store.list_runs(p.name, s["id"], limit=5)
         rv = p.store.latest_review(p.name, s["id"])
@@ -154,9 +154,9 @@ def update_source(project: str, source_id: str, **fields) -> dict:
     return list_sources(project, source_id=source_id)
 
 
-# ------------------------------------------------------------------ lanes / policy
+# ------------------------------------------------------------------ lanes
 def detect_lane(project: str, source_id: str | None = None, use_mcp: bool = True, use_proxy: bool = True, use_browser_ua: bool = True) -> dict:
-    """Detect lanes. A source the operator switched the proxy route on for (and whose robots/terms allow it) is
+    """Detect lanes. A source the operator switched the proxy route on for is
     probed with the route armed: it is used only if the direct probe meets an IP-level block (`via_proxy`)."""
     p = _p(project)
     ids = [source_id] if source_id else [s["id"] for s in p.store.list_sources(p.name) if s.get("status") in ("candidate", "blocked", None)]
@@ -199,18 +199,16 @@ def detect_lane(project: str, source_id: str | None = None, use_mcp: bool = True
     return out[0] if source_id else {"detected": out, "count": len(out)}
 
 
-def record_policy(project: str, source_id: str, terms_status: str | None = None, terms_url: str | None = None, terms_clause: str | None = None,
-                  lane: str | None = None, reason: str | None = None, actor: str = "operator") -> dict:
-    s = lanes.record_policy(_p(project), source_id, terms_status=terms_status, terms_url=terms_url, terms_clause=terms_clause, lane=lane, reason=reason,
-                            actor=actor)
-    return {"source": {k: s.get(k) for k in ("id", "lane", "status", "terms_status", "terms_url", "terms_clause", "robots_status")}}
+def set_lane(project: str, source_id: str, lane: str, reason: str | None = None, actor: str = "operator") -> dict:
+    s = lanes.set_lane(_p(project), source_id, lane, reason=reason, actor=actor)
+    return {"source": {k: s.get(k) for k in ("id", "lane", "status", "enabled")}}
 
 
 from .grepsafe import grep_spans  # noqa: E402  (re-exported: probe_url's bounded regex search)
 
 
 def probe_url(url: str, max_chars: int = 20000, accept: str = "html", offset: int = 0, grep: str | None = None, context: int = 1500) -> dict:
-    """Fetch one page through the polite client (robots-checked) so an agent can read raw markup.
+    """Fetch one page through the polite client so an agent can read raw markup.
     `offset` pages through long documents; `grep` (a regex) returns up to 8 snippets of +-`context` characters
     around its matches, so listing cards deep in a large page can be read without dumping it all."""
     http = Http(rate_s=1.0)

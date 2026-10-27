@@ -16,7 +16,7 @@ from harvest_ai.http import Http
 # ---------------------------------------------------------------- O4: session headers
 def test_http_refuses_session_headers_by_default(site):
     site.route("/api", (200, {"content-type": "application/json"}, "{}"))
-    h = Http(rate_s=0, respect_robots=False)
+    h = Http(rate_s=0)
     try:
         for hdr in ({"Cookie": "sid=1"}, {"authorization": "Bearer k"}, {"Proxy-Authorization": "Basic x"}):
             assert h.get(site.url + "/api", headers=hdr) is None
@@ -24,7 +24,7 @@ def test_http_refuses_session_headers_by_default(site):
         assert h.get(site.url + "/api", headers={"X-Api-Key": "public"}) is not None
     finally:
         h.close()
-    h = Http(rate_s=0, respect_robots=False, allow_session_headers=True)
+    h = Http(rate_s=0, allow_session_headers=True)
     try:
         assert h.get(site.url + "/api", headers={"Authorization": "Bearer published-key"}) is not None
     finally:
@@ -50,49 +50,6 @@ def test_session_headers_need_an_operator_decision_per_source(cars):
     assert len(res["pages"][0]["rows"]) == 1
     service.session_headers_disable(p.name, sid)
     assert review.job_for(p, p.store.get_source(p.name, sid), None, max_pages=1)["http"]["allow_session_headers"] is False
-
-
-# ---------------------------------------------------------------- O6: an agent's permissive verdict is re-read
-TERMS_OK = ("<html><body><h1>Terms of use</h1><p>" + "General conditions of the marketplace. " * 20 +
-            "</p><p>Data published on this site may be reused, including by automated means, with attribution.</p></body></html>")
-TERMS_FORBID = ("<html><body><h1>Terms</h1><p>" + "General conditions. " * 30 +
-                "</p><p>You may not use robots, scrapers or other automated means to access the site.</p></body></html>")
-
-
-def _terms_source(site):
-    p = make_project()
-    site.route("/cars", (200, {"content-type": "text/html"}, "<html><body>cars</body></html>"))
-    site.route("/terms", (200, {"content-type": "text/html; charset=utf-8"}, TERMS_OK))
-    site.route("/terms-forbid", (200, {"content-type": "text/html; charset=utf-8"}, TERMS_FORBID))
-    sid = add_source(p, site.url + "/cars")
-    p.store.upsert_source(p.name, sid, {"lane": "html", "status": "lane_detected", "robots_status": "allowed", "terms_status": "unknown"})
-    return p, sid
-
-
-def test_agent_allowed_verdict_needs_the_quoted_clause_on_the_cited_page(site):
-    p, sid = _terms_source(site)
-    agent = "agent:audit"
-    with pytest.raises(ValueError, match="quote"):  # allowed without a quote
-        service.record_policy(p.name, sid, terms_status="allowed", terms_url=site.url + "/terms", actor=agent)
-    with pytest.raises(ValueError, match="does not appear"):  # a clause the page does not contain
-        service.record_policy(p.name, sid, terms_status="allowed", terms_url=site.url + "/terms",
-                              terms_clause="scraping is explicitly welcome", actor=agent)
-    with pytest.raises(ValueError, match="prohibition"):  # the page itself forbids, whatever the agent quotes
-        service.record_policy(p.name, sid, terms_status="no_clause", terms_url=site.url + "/terms-forbid", actor=agent)
-    with pytest.raises(ValueError, match="could not be fetched"):
-        service.record_policy(p.name, sid, terms_status="no_clause", terms_url=site.url + "/missing", actor=agent)
-    assert p.store.get_source(p.name, sid)["terms_status"] == "unknown"
-    service.record_policy(p.name, sid, terms_status="allowed", terms_url=site.url + "/terms",
-                          terms_clause="may be reused,  including by AUTOMATED means", actor=agent)
-    src = p.store.get_source(p.name, sid)
-    assert src["terms_status"] == "allowed" and src["lane_detail"]["policy"]["verified"]["ok"] is True
-
-
-def test_operator_verdicts_are_not_refetched(site):
-    p, sid = _terms_source(site)
-    before = len(site.hits)
-    service.record_policy(p.name, sid, terms_status="no_clause", terms_url=site.url + "/elsewhere", reason="read by the operator")
-    assert len(site.hits) == before and p.store.get_source(p.name, sid)["terms_status"] == "no_clause"
 
 
 # ---------------------------------------------------------------- O7: bounded grep, streamed exports

@@ -2,7 +2,7 @@
 
   1. lint    compile, the module contract (`fetch(page, *, http, ctx)`), an AST scan for code a
              scraper never needs (process spawning, os.system, eval/exec, dynamic imports, raw
-             sockets, direct HTTP clients that would bypass robots and politeness, private
+             sockets, direct HTTP clients that would bypass the URL gate and politeness, private
              attributes such as the http client's proxy route), and ruff's
              syntax / undefined-name rules when ruff is installed.
   2. smoke   a page-1 fetch in the sandbox child process with a hard timeout.
@@ -310,10 +310,6 @@ def enable(p: Project, sid: str, enabled: bool = True) -> dict:
     problems = []
     if src.get("lane") in (None, "none"):
         problems.append(f"lane is {src.get('lane')}")
-    if src.get("robots_status") != "allowed":
-        problems.append(f"robots.txt status is {src.get('robots_status')}")
-    if src.get("terms_status") not in ("allowed", "no_clause"):
-        problems.append(f"terms status is {src.get('terms_status')}: read the terms and record a verdict (harvest_record_policy)")
     path = p.module_path(sid)
     cur_sha = sandbox.sha256_file(path) if path.is_file() else None
     if not src.get("reviewed_sha"):

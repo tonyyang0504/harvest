@@ -1,11 +1,11 @@
 """The one HTTP client every lane probe and scraper module uses.
 
-Per request: URL gate (http/https, public addresses only unless `allow_private`) -> robots.txt ->
-per-host politeness (one request at a time per host, `rate_s` seconds apart, raised to the site's
-Crawl-delay up to a ceiling) -> request -> retries on 429/5xx/network with backoff; a 429 doubles the
-host's delay (honouring Retry-After) for the rest of the run -> a per-URL budget of attempts and
-seconds -> block detection (401/403/451, challenge pages). Anything disallowed, blocked or failing
-returns None and is logged in `events`; callers never see exceptions.
+Per request: URL gate (http/https, public addresses only unless `allow_private`) -> per-host
+politeness (one request at a time per host, `rate_s` seconds apart) -> request -> retries on
+429/5xx/network with backoff; a 429 doubles the host's delay (honouring Retry-After) for the rest of
+the run -> a per-URL budget of attempts and seconds -> block detection (401/403/451, challenge pages).
+Anything refused, blocked or failing returns None and is logged in `events`; callers never see exceptions.
+robots.txt is not consulted; lane detection reads it only as a list of sitemaps (lanes.py).
 
 Never logs in and never solves challenges: a block is a finding. The one exception is the gated
 residential-proxy route (`proxy.Route`, see proxy.py): when a walk was given one and the direct
@@ -31,9 +31,8 @@ import httpcore
 import httpx
 
 from . import proxy as proxy_mod
-from . import robots as robots_mod
 
-DEFAULT_UA = os.environ.get("HARVEST_USER_AGENT", "harvest-bot/0.1 (+public data collection; robots.txt honoured)")
+DEFAULT_UA = os.environ.get("HARVEST_USER_AGENT", "harvest-bot/0.1 (+public data collection; polite, rate-limited)")
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 BLOCK_STATUSES = (401, 403, 407, 451)
 CHALLENGE_MARKERS = ("cf-chl", "just a moment...", "attention required", "captcha", "are you a human", "are you a robot",
@@ -136,8 +135,6 @@ class _Host:
     lock: threading.Lock = field(default_factory=threading.Lock)
     next_at: float = 0.0
     delay: float = 1.0
-    robots: robots_mod.Robots | None = None
-    robots_at: float = 0.0
     via_proxy: bool = False  # the direct route met an IP block here; this walk goes through the proxy route
     proxy_off: bool = False  # the proxy route met a challenge/login/paywall here; never again this walk
     trigger: str | None = None
@@ -199,33 +196,28 @@ class _PublicOnlyBackend(httpcore.SyncBackend):
 
 class Http:
     def __init__(self, *, user_agent: str | None = None, rate_s: float = 2.0, timeout: float = 20.0, retries: int = 3,
-                 url_budget_s: float = 90.0, max_body: int = 8 * 1024 * 1024, respect_robots: bool = True,
-                 allow_private: bool | None = None, route: proxy_mod.Route | None = None,
-                 max_crawl_delay: float = 60.0, backoff_s: float = 1.0, transport: httpx.BaseTransport | None = None,
+                 url_budget_s: float = 90.0, max_body: int = 8 * 1024 * 1024,
+                 allow_private: bool | None = None, route: proxy_mod.Route | None = None, backoff_s: float = 1.0, transport: httpx.BaseTransport | None = None,
                  ua_mode: str = "own", allow_session_headers: bool = False):
         if ua_mode not in ("own", "browser"):
             raise ValueError("ua_mode: own | browser")
         self.ua_mode = ua_mode
         # harvest never logs in: Cookie / Authorization only with an operator decision for the source (sessionhdr.py)
         self.allow_session_headers = allow_session_headers
-        # robots.txt is always read for harvest's own token; in browser mode `*` is checked too and the stricter wins
-        self.robots_ua = user_agent or DEFAULT_UA
-        self.ua = browser_ua() if ua_mode == "browser" else self.robots_ua
+        self.ua = browser_ua() if ua_mode == "browser" else (user_agent or DEFAULT_UA)
         self.rate_s = rate_s
         self.timeout = timeout
         self.retries = retries
         self.url_budget_s = url_budget_s
         self.max_body = max_body
-        self.respect_robots = respect_robots
         self.allow_private = allow_private if allow_private is not None else os.environ.get("HARVEST_ALLOW_PRIVATE") == "1"
         self._route = route  # the gated residential-proxy route, or None (private: scraper modules may not touch it)
-        self.max_crawl_delay = max_crawl_delay
         self.backoff_s = backoff_s
         self._transport = transport
         self._hosts: dict[str, _Host] = {}
         self._lock = threading.Lock()
         self._clients: dict[str | None, httpx.Client] = {}
-        self.stats = {"requests": 0, "ok": 0, "blocked": 0, "robots_denied": 0, "errors": 0, "retries": 0, "rate_limited": 0, "gated": 0,
+        self.stats = {"requests": 0, "ok": 0, "blocked": 0, "errors": 0, "retries": 0, "rate_limited": 0, "gated": 0,
                       "ip_blocked": 0, "proxy_fallbacks": 0, "proxy_requests": 0, "proxy_ok": 0, "proxy_bytes": 0,
                       "proxy_budget_stop": 0, "proxy_exit_failures": 0, "proxy_refused": 0, "proxy_no_help": 0, "session_refused": 0}
         self.events: list[dict] = []
@@ -261,13 +253,6 @@ class Http:
         if self.ua_mode == "browser":  # only the header set changes: no fingerprint, no client hints beyond what the UA states
             return dict(BROWSER_HEADERS, **{"User-Agent": self.ua})
         return {"User-Agent": self.ua, "Accept-Language": "*;q=0.5"}
-
-    def robots_allows(self, rb: robots_mod.Robots, url: str) -> bool:
-        """harvest's own token; in browser mode also `*` (whichever is stricter)."""
-        ok = rb.can_fetch(self.robots_ua, url)
-        if self.ua_mode == "browser":
-            ok = ok and rb.can_fetch("*", url)
-        return ok
 
     def close(self) -> None:
         for c in self._clients.values():
@@ -309,53 +294,6 @@ class Http:
 
     def _gate_request(self, request: httpx.Request) -> None:  # redirects pass the gate too
         self.gate(str(request.url))
-
-    # ------------------------------------------------------------------ robots
-    def robots_for(self, url: str) -> robots_mod.Robots:
-        u = urlsplit(url)
-        origin = f"{u.scheme}://{u.netloc}"
-        h = self._host(u.netloc)
-        if h.robots is not None and time.time() - h.robots_at < 6 * 3600:
-            return h.robots
-        rurl = origin + "/robots.txt"
-        status, text, err, hdrs = None, "", None, {}
-        try:
-            self.gate(rurl)
-            with h.lock:
-                self._wait(h)
-                r = self._client(None).get(rurl)
-                h.next_at = time.monotonic() + h.delay
-            status, text, hdrs = r.status_code, r.text[:500_000], {k.lower(): v for k, v in r.headers.items()}
-        except Exception as exc:  # network error -> unreachable -> disallow all
-            err = f"{exc.__class__.__name__}: {str(exc)[:120]}"
-            self._log("robots_error", rurl, error=err)
-        # an IP block on robots.txt itself: read it through the route (when this walk may use one), never guess
-        trig = self._trigger(_Out(status, b"", hdrs, rurl, "utf-8", err, gave_up=True, text=text))
-        if trig and self._route_ok(h, {}):
-            if self._route.usable():
-                self._log("proxy_fallback", rurl, trigger=trig)
-                self.stats["proxy_fallbacks"] += 1
-                out = self._run("GET", rurl, h, {}, None, None, via=True)
-                if out.status is not None and out.status < 500 and proxy_mod.classify(out.status, out.headers, out.text) in ("ok", "other", "ip_block"):
-                    status, text = out.status, out.text[:500_000]
-                    if out.status < 400:
-                        h.via_proxy, h.trigger = True, trig
-                if self._trigger(out):
-                    self._no_help(rurl, h, out)
-            else:
-                self._budget_stop(rurl)
-        rb = robots_mod.from_status(status, text, rurl)
-        cds = [rb.crawl_delay(self.robots_ua)] + ([rb.crawl_delay("*")] if self.ua_mode == "browser" else [])
-        cd = max((c for c in cds if c), default=None)
-        if cd:
-            h.delay = max(h.delay, min(cd, self.max_crawl_delay))
-        h.robots, h.robots_at = rb, time.time()
-        return rb
-
-    def allowed(self, url: str) -> bool:
-        if not self.respect_robots:
-            return True
-        return self.robots_allows(self.robots_for(url), url)
 
     # ------------------------------------------------------------------ requests
     def _wait(self, h: _Host) -> None:
@@ -525,10 +463,6 @@ class Http:
             return None
         if params:
             url = str(httpx.URL(url, params=params))
-        if not self.allowed(url):
-            self.stats["robots_denied"] += 1
-            self._log("robots_denied", url)
-            return None
         u = urlsplit(url)
         h = self._host(u.netloc)
         hdrs = dict(headers or {})
@@ -606,23 +540,19 @@ class Http:
         return r.json() if r else None
 
     def post_json(self, url: str, body: Any, **kw) -> Any:
-        """For public search endpoints that only answer POST; same robots/politeness ladder."""
+        """For public search endpoints that only answer POST; same politeness ladder."""
         r = self.request("POST", url, json_body=body, accept="json", **kw)
         return r.json() if r else None
 
     # ------------------------------------------------------------------ browser lane
     def render(self, url: str, wait_ms: int = 1500) -> str | None:
-        """Headless-browser lane: HTML after JavaScript, via Playwright when installed. Same robots
-        and URL gate; page 1 only by policy. Returns None when no browser is available. The proxy
+        """Headless-browser lane: HTML after JavaScript, via Playwright when installed. Same URL gate
+        and politeness; page 1 only by policy. Returns None when no browser is available. The proxy
         route applies as for `request`: only after the direct render met an IP-level block."""
         try:
             self.gate(url)
         except Blocked as exc:
             self._log("gated", url, reason=str(exc))
-            return None
-        if not self.allowed(url):
-            self.stats["robots_denied"] += 1
-            self._log("robots_denied", url)
             return None
         try:
             from playwright.sync_api import sync_playwright  # noqa: F401  optional dependency

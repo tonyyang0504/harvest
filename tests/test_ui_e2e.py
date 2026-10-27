@@ -416,7 +416,7 @@ def test_07_lane_detection(ui, stack):
     tab(ui, "sources")
     cars, wall, den = source_row(ui, "Cars board"), source_row(ui, "Challenge wall"), source_row(ui, "Denied 403")
     expect(cars).to_contain_text("html")
-    expect(cars).to_contain_text("no_clause")
+    expect(cars).not_to_contain_text("no_clause")  # robots.txt and terms are not shown: they are no gate
     expect(wall.locator("td.lane")).to_contain_text("none")
     expect(den.locator("td.lane")).to_contain_text("none")
     # nothing can be approved before a review; a lane-none source cannot even be built or scaffolded
@@ -521,7 +521,7 @@ def test_09_proxy_and_ua_decisions_and_gates(ui, stack):
     ui.dialogs = ["plain 403 from the datacenter range"]
     den.get_by_role("button", name="On…").click()
     ui.toast("proxy on")
-    expect(den.locator(".gate")).to_contain_text("not used")  # no pool configured here, and the terms were never read
+    expect(den.locator(".gate")).to_contain_text("not used")  # no proxy pool configured here
     assert_source_actions_reachable(ui)
     ui.shot("09-sources-gates")
     ui.dialogs = ["no longer needed"]

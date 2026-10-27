@@ -62,7 +62,7 @@ async def _call(fn, *args, **kw) -> CallToolResult:
     why = _refusal(tool)
     if why:
         return _res({"error": "forbidden", "message": why}, True)
-    if fn is service.record_policy and _agent_kind():
+    if fn is service.set_lane and _agent_kind():
         kw["actor"] = f"agent:{_agent_kind()}"
     try:
         return _res(await asyncio.to_thread(fn, *args, **kw))
@@ -111,23 +111,22 @@ async def harvest_census_resume(project: str, max_sources: int, start_agent: boo
     return await _call(service.census_resume, project, max_sources, start_agent)
 
 
-@server.tool(name="harvest_list_sources", title="List sources", description="The source registry (status, lane, robots/terms status, review verdict, records, last run). With source_id: the full row incl. evidence, lane signals, recent runs and the latest review report.", annotations=RO)
+@server.tool(name="harvest_list_sources", title="List sources", description="The source registry (status, lane, review verdict, records, last run). With source_id: the full row incl. evidence, lane signals, recent runs and the latest review report.", annotations=RO)
 async def harvest_list_sources(project: str, status: str | None = None, source_id: str | None = None) -> CallToolResult:
     return await _call(service.list_sources, project, status, source_id)
 
 
-@server.tool(name="harvest_detect_lane", title="Detect lane", description="Probe a source (or every undetected candidate): robots.txt, terms page, configured MCP servers, OpenAPI, feeds, sitemaps, embedded JSON (Next/Nuxt/JSON-LD), HTML or headless browser. First match wins; robots or terms that forbid collection, logins, captchas and paywalls give lane none.", annotations=WRITE_NET)
+@server.tool(name="harvest_detect_lane", title="Detect lane", description="Probe a source (or every undetected candidate): configured MCP servers, OpenAPI, feeds, sitemaps, embedded JSON (Next/Nuxt/JSON-LD), HTML or headless browser. First match wins; logins, captchas, paywalls and bot challenges or blocks give lane none.", annotations=WRITE_NET)
 async def harvest_detect_lane(project: str, source_id: str | None = None) -> CallToolResult:
     return await _call(service.detect_lane, project, source_id)
 
 
-@server.tool(name="harvest_record_policy", title="Record a policy verdict", description="Record a terms verdict you read yourself (terms_status allowed|no_clause|forbids with terms_url and a <=25-word clause) or override the lane. A forbids verdict or robots disallow always forces lane none.", annotations=WRITE)
-async def harvest_record_policy(project: str, source_id: str, terms_status: str | None = None, terms_url: str | None = None,
-                                terms_clause: str | None = None, lane: str | None = None, reason: str | None = None) -> CallToolResult:
-    return await _call(service.record_policy, project, source_id, terms_status, terms_url, terms_clause, lane, reason)
+@server.tool(name="harvest_set_lane", title="Override the lane", description="Record the lane a source is built on when detection picked a worse one (e.g. a public JSON API instead of a thin feed): mcp|openapi|json_api|feed|sitemap|embedded_json|html|browser|none, with a short reason. An agent cannot open a source whose lane is none or undetected (login, captcha, paywall, bot challenge or block); that is an operator decision. Lane none disables the source.", annotations=WRITE)
+async def harvest_set_lane(project: str, source_id: str, lane: str, reason: str | None = None) -> CallToolResult:
+    return await _call(service.set_lane, project, source_id, lane, reason)
 
 
-@server.tool(name="harvest_probe_url", title="Fetch a page politely", description="GET one URL through harvest's polite, robots-checked client and return the status, meta, JSON-LD types, Next.js keys, links and the HTML (a max_chars window from offset; next_offset pages on) or JSON. grep=<regex> (at most 300 characters, matched within a 3 s limit) returns snippets around each match, e.g. grep='data-listing-id' to read listing cards deep in a large page.", annotations=RO_NET)
+@server.tool(name="harvest_probe_url", title="Fetch a page politely", description="GET one URL through harvest's polite client and return the status, meta, JSON-LD types, Next.js keys, links and the HTML (a max_chars window from offset; next_offset pages on) or JSON. grep=<regex> (at most 300 characters, matched within a 3 s limit) returns snippets around each match, e.g. grep='data-listing-id' to read listing cards deep in a large page.", annotations=RO_NET)
 async def harvest_probe_url(url: str, max_chars: int = 20000, accept: str = "html", offset: int = 0, grep: str | None = None,
                             context: int = 1500) -> CallToolResult:
     return await _call(service.probe_url, url, max_chars, accept, offset, grep, context)
@@ -143,7 +142,7 @@ async def harvest_review_source(project: str, source_id: str, timeout_s: int | N
     return await _call(service.review_source, project, source_id, timeout_s, pages)
 
 
-@server.tool(name="harvest_enable_source", title="Enable a source", description="Enable (or disable) collection. Refused unless the lane is not none, robots allow, terms are allowed/no_clause, and the current module sha has a passing review.", annotations=WRITE)
+@server.tool(name="harvest_enable_source", title="Enable a source", description="Enable (or disable) collection. Refused unless the lane is not none and the current module sha has a passing review.", annotations=WRITE)
 async def harvest_enable_source(project: str, source_id: str, enabled: bool = True) -> CallToolResult:
     return await _call(service.enable_source, project, source_id, enabled)
 
@@ -162,7 +161,7 @@ async def harvest_proxy_status(project: str | None = None, check: int = 0) -> Ca
     return await _call(service.proxy_status, project, check)
 
 
-@server.tool(name="harvest_proxy_enable", title="Switch the proxy route on", description="OPERATOR DECISION: switch the residential-proxy route on for a project or one source (source_id), recording the reason and date. The route is then used only when robots and the terms verdict allow collection AND the direct request met an IP-level block (401/403 without a challenge page, a connection reset, a persistent 429) - never for captchas, bot challenges, login walls, paywalls or signed-in sessions. Optionally set the project's daily_bytes / daily_requests caps, mode (sticky|rotate) and country (auto|off|CC).", annotations=WRITE)
+@server.tool(name="harvest_proxy_enable", title="Switch the proxy route on", description="OPERATOR DECISION: switch the residential-proxy route on for a project or one source (source_id), recording the reason and date. The route is then used only (within the daily budgets) when the direct request met an IP-level block (401/403 without a challenge page, a connection reset, a persistent 429) - never for captchas, bot challenges, login walls, paywalls or signed-in sessions. Optionally set the project's daily_bytes / daily_requests caps, mode (sticky|rotate) and country (auto|off|CC).", annotations=WRITE)
 async def harvest_proxy_enable(project: str, reason: str, source_id: str | None = None, daily_bytes: int | None = None,
                                daily_requests: int | None = None, mode: str | None = None, country: str | None = None) -> CallToolResult:
     return await _call(service.proxy_enable, project, reason, source_id, daily_bytes, daily_requests, mode, country, "mcp")
@@ -173,7 +172,7 @@ async def harvest_ua_status(project: str) -> CallToolResult:
     return await _call(service.ua_status, project)
 
 
-@server.tool(name="harvest_ua_enable", title="Switch the browser user agent on", description="OPERATOR DECISION: send a current desktop Chrome user agent (and matching Accept/Accept-Language) instead of harvest's own, for a project or one source, recording the reason and date. Only the UA header changes: no fingerprint spoofing, no challenge or captcha solving, no login or paywall work-arounds; challenge pages still stop the source; robots.txt is checked for harvest's token and for *, the stricter wins; terms must allow collection.", annotations=WRITE)
+@server.tool(name="harvest_ua_enable", title="Switch the browser user agent on", description="OPERATOR DECISION: send a current desktop Chrome user agent (and matching Accept/Accept-Language) instead of harvest's own, for a project or one source, recording the reason and date. Only the UA header changes: no fingerprint spoofing, no challenge or captcha solving, no login or paywall work-arounds; challenge pages still stop the source.", annotations=WRITE)
 async def harvest_ua_enable(project: str, reason: str, source_id: str | None = None) -> CallToolResult:
     return await _call(service.ua_enable, project, reason, source_id, "mcp")
 

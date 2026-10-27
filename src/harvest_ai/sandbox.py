@@ -1,7 +1,7 @@
 """Run a scraper module in a child process: the review smoke fetch and every production walk.
 
 Parent side (`run`): reads the module's bytes and checks them against the reviewed sha256, builds the walk's
-`Http` (robots, politeness, the URL gate, the residential-proxy route and its credentials), spawns the child, and
+`Http` (politeness, the URL gate, the residential-proxy route and its credentials), spawns the child, and
 serves the child's http calls over the pipe (`_serve_rpc`). It streams the child's JSON lines (one per page, then
 an `end` line) and kills the child at the deadline, or when `stop()` says so (a lost source lock).
 
@@ -165,7 +165,7 @@ def _import_roots() -> list[str]:
 
 
 # ------------------------------------------------------------------------------ the parent's side of the http RPC
-RPC_METHODS = ("request", "get", "get_text", "get_json", "post_json", "render", "allowed")
+RPC_METHODS = ("request", "get", "get_text", "get_json", "post_json", "render")
 
 
 def _rpc_value(v):
@@ -177,7 +177,7 @@ def _rpc_value(v):
 
 
 def _serve_rpc(http, msg: dict) -> dict:
-    """One call from the module, executed by the parent's Http (robots, politeness, the URL gate, the proxy route and
+    """One call from the module, executed by the parent's Http (politeness, the URL gate, the proxy route and
     its credentials all stay here). MCP-lane calls go to harvest's own client. Errors come back as errors."""
     out: dict = {"type": "rpc_result", "id": msg.get("id")}
     try:
@@ -466,7 +466,7 @@ def walk(fetch, *, http, ctx: dict, max_pages: int, max_rows: int, emit: Callabl
     seen: set[str] = set()
     dry, page_errors, total, pages = 0, 0, 0, 0
     stopped = "max_pages"
-    bad_http = ("errors", "blocked", "gated", "robots_denied")
+    bad_http = ("errors", "blocked", "gated")
     start_stats = dict(http.stats)
     for page in range(1, max_pages + 1):
         before = {k: http.stats.get(k, 0) for k in bad_http}
@@ -573,9 +573,6 @@ class RpcHttp:
 
     def render(self, url: str, wait_ms: int = 1500):
         return self._call("render", url, wait_ms)
-
-    def allowed(self, url: str) -> bool:
-        return bool(self._call("allowed", url))
 
     def proxy_report(self):
         return None  # the parent attaches the route's usage to every event

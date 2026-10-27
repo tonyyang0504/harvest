@@ -53,7 +53,7 @@ def test_render_in_sandbox_and_browser_lane_end_to_end(site):
     assert lanes.detect(site.url + "/js", http=Http(rate_s=0.01), use_mcp=False)["lane"] == "browser"
     p = make_project()
     sid = add_source(p, site.url + "/js")
-    p.store.upsert_source(p.name, sid, {"lane": "browser", "robots_status": "allowed", "terms_status": "no_clause", "terms_url": site.url + "/t"})
+    p.store.upsert_source(p.name, sid, {"lane": "browser"})
     p.module_path(sid).write_text(MODULE, encoding="utf-8")
     res = sandbox.run(review.job_for(p, p.store.get_source(p.name, sid), None, max_pages=1), 90)
     assert res["pages"] and not res["pages"][0]["error"], res
@@ -65,12 +65,13 @@ def test_render_in_sandbox_and_browser_lane_end_to_end(site):
     assert r["rows_stored"] == 3 and r["pages"] == 1 and not r["complete"] and r["stopped"] == "page1_only" and r["write_mode"] == "upsert"
 
 
-def test_render_respects_robots(site):
-    site.route("/robots.txt", (200, {}, "User-agent: *\nDisallow: /js\n"))
+def test_render_ignores_robots_txt(site):
+    site.route("/robots.txt", (200, {}, "User-agent: *\nDisallow: /\n"))
     site.route("/js", JS_SHELL)
     from harvest_ai.http import Http
     h = Http(rate_s=0.01)
-    assert h.render(site.url + "/js") is None and h.stats["robots_denied"] == 1 and "/js" not in site.paths()
+    html = h.render(site.url + "/js")
+    assert html and "Kia Rio" in html and "/js" in site.paths() and site.count("/robots.txt") == 0
 
 
 def test_render_treats_4xx_as_a_block(site):
@@ -138,7 +139,7 @@ def test_browser_egress_is_pinned_against_dns_rebinding(site, monkeypatch):
         ip = "93.184.215.14" if calls["n"] <= 2 else "127.0.0.1"
         return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, port))]
     monkeypatch.setattr(_socket, "getaddrinfo", flip)
-    http = Http(allow_private=False, respect_robots=False, timeout=8)
+    http = Http(allow_private=False, timeout=8)
     try:
         assert http.render(f"http://rebind.test:{port}/cars", wait_ms=200) is None
         assert http._egress_proxy is not None and any("127.0.0.1" in r for r in http._egress_proxy.refused)

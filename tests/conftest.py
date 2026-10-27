@@ -69,11 +69,11 @@ def add_source(p, url, regions=("KZ",), angle="classifieds", name=None):
     return (res["added"] or res["merged"])[0]["id"]
 
 
-def ready_source(p, url, module=CAR_MODULE, terms="no_clause"):
-    """Register a source, write its module, record lane/robots/terms as detection would, review and enable."""
+def ready_source(p, url, module=CAR_MODULE):
+    """Register a source, write its module, record the lane as detection would, review and enable."""
     from harvest_ai import review
     sid = add_source(p, url)
-    p.store.upsert_source(p.name, sid, {"lane": "html", "robots_status": "allowed", "terms_status": terms, "terms_url": url + "/terms", "status": "lane_detected"})
+    p.store.upsert_source(p.name, sid, {"lane": "html", "status": "lane_detected"})
     p.module_path(sid).write_text(module, encoding="utf-8")
     rep = review.review(p, sid, timeout_s=60)
     assert rep["verdict"] == "pass", rep

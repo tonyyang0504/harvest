@@ -25,7 +25,7 @@ harvest runs scraper modules written by agents and fetches pages chosen by agent
   the module's sha256) and run in a separate process: under bubblewrap on Linux (`HARVEST_SANDBOX=bwrap`; no network of
   their own, a read-only filesystem, harvest's state and secrets masked), and under an audit-hook policy layer elsewhere.
 - **Fetching** refuses private, loopback, link-local and metadata addresses (connections pinned to the vetted address),
-  honours robots.txt, and never works around a bot challenge, login, captcha or paywall.
+  and never works around a bot challenge, login, captcha or paywall.
 - **Interfaces**: the web app binds 127.0.0.1 and needs an admin token; agent jobs run with explicit tool allowlists;
   repair dispatch is off by default.
 - **Secrets** (admin token, proxy pool file, MCP-lane config, store DSN) are read in place and never logged.

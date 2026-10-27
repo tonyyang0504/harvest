@@ -2,7 +2,7 @@
 
 harvest turns a *target* and *regions* into a maintained dataset. Agents do the open-ended work:
 finding the sites and writing the scrapers. harvest does everything that must be deterministic:
-the evidence rules, domain dedup, lane and policy detection, the review gate, polite fetching,
+the evidence rules, domain dedup, lane detection, the review gate, polite fetching,
 normalisation, storage, scheduling and health checks.
 
 ## Architecture
@@ -14,7 +14,7 @@ normalisation, storage, scheduling and health checks.
                      +--------+------------+-----------+-----------+-------------------+
                               |            |           |           |
                          regions.py    domains.py   http.py     normalize.py      db.py (SQLite | Postgres)
-                         templates.py  robots.py    extract.py  sandbox.py        scheduler.py  watchdog.py  agents.py
+                         templates.py               extract.py  sandbox.py        scheduler.py  watchdog.py  agents.py
 ```
 
 Every entry point is a thin wrapper over `harvest_ai.service`, so the same function and the same
@@ -27,8 +27,8 @@ rules run whether a call comes from an MCP client, the CLI, the web API or the s
 | `templates.py` | Record-schema templates: fields, types, units, currency and period rules, bounds, dedup keys, category conflicts |
 | `project.py` | Project spec and on-disk layout |
 | `census.py` | Plan (region × angle × language), evidence-checked candidates, domain dedup and merge, gap report and dry streak |
-| `lanes.py`, `mcp_client.py` | Lane detection, the robots and terms policy, the optional generic MCP-server lane |
-| `http.py`, `robots.py` | The polite client and an RFC 9309 robots parser |
+| `lanes.py`, `mcp_client.py` | Lane detection and the optional generic MCP-server lane |
+| `http.py` | The polite client (URL gate, per-host politeness, block detection, the proxy route) |
 | `extract.py` | A dependency-free HTML DOM, JSON-LD, Next/Nuxt data, `window.*` state, feeds, sitemaps |
 | `scaffold.py` | The scraper contract and one starting template per lane |
 | `review.py`, `sandbox.py` | The review gate and the sandboxed child process that runs every module |
@@ -135,10 +135,9 @@ installers and registers for businesses …).
 
 Each call is a **round** (`angle:classifieds:KZ`, `critic:r2`, `audit:r1`). `harvest_census_gaps` returns the
 region × angle matrix, the empty cells and the **dry streak**. The critic loops until two rounds in a row add
-nothing. Then an **independent auditor** agent tries to prove the census incomplete and records the terms
-verdicts it read itself.
+nothing. Then an **independent auditor** agent tries to prove the census incomplete.
 
-## 3. Lanes and policy
+## 3. Lanes
 
 `harvest_detect_lane` probes each source through the polite client, and the first match wins:
 
@@ -152,19 +151,11 @@ verdicts it read itself.
 | `sitemap` | A sitemap listing pages (from robots.txt or `/sitemap.xml`) when nothing richer exists |
 | `html` | Server-rendered content |
 | `browser` | A JavaScript shell. Needs Playwright (`pip install 'harvest[browser]'`) and is always limited to page 1. Chromium runs in the parent and connects through harvest's local filtering proxy (`egress.py`), which resolves each host once and connects only to a public address it vetted (DNS pinning) |
-| `none` | robots.txt disallows the path (or is unreachable: 5xx, timeout, connection error); the terms forbid automated collection; a login, captcha, paywall or block (including a bot-wall interstitial served with HTTP 200, e.g. Imperva/Incapsula) |
+| `none` | A login wall, captcha, paywall, bot challenge or block (including a bot-wall interstitial served with HTTP 200, e.g. Imperva/Incapsula), or no usable route |
 
-Terms are found from the page's links (terms, conditions, AGB, termos, условия, 利用規約, 이용약관 …), or from the
-site's home page when the source URL is a JSON endpoint or a feed. They are classified by prohibition patterns in
-English, German, Dutch, Spanish, Portuguese, French, Italian, Polish, Turkish, Russian, Indonesian/Malay, Arabic,
-Japanese, Chinese and Korean.
-
-- The heuristic returns `forbids`, `no_clause` or `unknown`. A terms page that is a PDF or other binary document,
-  or an unrendered JavaScript shell, is `unknown`: it was not read, so nothing was found.
-- robots.txt follows RFC 9309: every group naming harvest's product token (exact match), or else every `*` group,
-  applies, merged (many sites repeat `User-agent: *` further down the file).
-- An agent or operator records a reviewed verdict with the terms URL through `harvest_record_policy`.
-- A `forbids` verdict or a robots disallow always forces lane `none`, and a lane can never be made more permissive than that.
+robots.txt and a site's terms of service are not rules in harvest: robots.txt is never checked before a request (it
+is read only for its `Sitemap:` lines, to find sitemaps), terms pages are not looked for or classified, and neither
+can make a lane `none`, block enabling or gate the proxy route. Whether to collect a site is the operator's call.
 
 **harvest never logs in, solves captchas, gets past paywalls or uses mirrors.** A block is recorded as a finding.
 
@@ -187,7 +178,7 @@ def fetch(page: int, *, http, ctx) -> list[dict]:   # or {"rows": [...], "done":
 ```
 
 - `http` is the only way out to the network. It provides `get_text`, `get_json`, `post_json` and `render`,
-  and returns `None` on a block, a robots denial or an error.
+  and returns `None` on a block or an error.
 - `ctx` holds the source row, the project, the template fields, the region and its currency, and a `state`
   dict that persists across the pages of one walk.
 - Rows are keyed by template field names. Raw strings are fine; normalisation parses them.
@@ -210,7 +201,7 @@ is mandatory before a source can be enabled:
    - the module's bytes, checked against the sha256 by the parent and again by the child, arrive on stdin; the
      child never opens the module file or anything else under `$HARVEST_HOME`;
    - **no network of its own.** The module's `http` (and `harvest_ai.mcp_client`) is a stub that forwards each call
-     over the pipe to the parent, whose `Http` does the request with robots, politeness, the URL gate, the
+     over the pipe to the parent, whose `Http` does the request with politeness, the URL gate, the
      session-header rule and the proxy route. The child never holds a proxy exit or credential;
    - a scrubbed environment, a throwaway working directory, CPU and file-size rlimits;
    - an audit hook that refuses process spawning, any socket use, native loading, writes outside the working
@@ -225,8 +216,8 @@ is mandatory before a source can be enabled:
 3. **Schema.** The rows are normalised against the template. At least 80 % must pass. The report shows field
    coverage, quarantine reasons, parse warnings and samples.
 
-The verdict is stored with the module's sha256. `harvest_enable_source` refuses unless the lane is not `none`,
-robots allow, the terms are `allowed`/`no_clause` and the current sha has a passing review. The runner will not
+The verdict is stored with the module's sha256. `harvest_enable_source` refuses unless the lane is not `none`
+and the current sha has a passing review. The runner will not
 run a module whose sha has changed; the source becomes `review_stale` until it is reviewed again.
 
 ## 5. Runner
@@ -236,7 +227,7 @@ run a module whose sha has changed; the source becomes `review_stale` until it i
 - A project lock file prevents overlapping runs.
 - **Politeness:**
   - one in-flight request per host;
-  - `rate_s` between requests, raised to the site's Crawl-delay (up to 60 s);
+  - `rate_s` between requests;
   - retries on 429, 5xx and network errors with backoff;
   - a 429 honours Retry-After and doubles the host's delay for the rest of the run;
   - a per-URL budget of attempts and seconds;
@@ -277,8 +268,8 @@ an operator can switch on a route through rotating residential proxies (a pool y
 
 | | Rule | Where |
 |---|---|---|
-| (a) | The project or the source is switched on by an operator decision with a reason and a date (`harvest proxy enable`). A source-level decision (on or off) wins over the project's. | `project.json` → `proxy` (with history); source → `lane_detail.proxy` (like the reviewed terms verdict in `lane_detail.policy`) |
-| (b) | robots.txt allows the source and its terms verdict is `allowed`/`no_clause`. Lane detection may also run with an unread (`unknown`) verdict so the proxied probe can read the terms; `forbids`, or a lane `none` because of a login, paywall, captcha or challenge, stops it. | `proxy.eligible` |
+| (a) | The project or the source is switched on by an operator decision with a reason and a date (`harvest proxy enable`). A source-level decision (on or off) wins over the project's. Each walk stays within the daily byte and request budgets (below). | `project.json` → `proxy` (with history); source → `lane_detail.proxy` |
+| (b) | The source is not lane `none` because of a login, paywall, captcha or challenge. | `proxy.eligible` |
 | (c) | The direct request failed with an IP-level block: a 401/403 whose page is not a challenge, login or paywall; a connection reset/refused/dropped; or a 429 that persisted through the back-off. | `Http.request` / `Http.render` |
 
 The route is never used for:
@@ -292,10 +283,9 @@ The route is never used for:
   the walk.
 
 **How a walk uses it.** Every request goes direct first. On an IP-level block the same request is retried
-through the route, under the same per-host politeness (one request at a time, `rate_s`, Crawl-delay, 429
+through the route, under the same per-host politeness (one request at a time, `rate_s`, 429
 escalation). Once a host answered through the route, the rest of that walk's requests to it go through the route.
-A robots.txt that is itself IP-blocked is read through the route, so the real robots rules apply (never "403 = allow
-all"). The browser lane does the same with Chromium's proxy setting; images, media and fonts are not loaded through
+The browser lane does the same with Chromium's proxy setting; images, media and fonts are not loaded through
 the proxy.
 
 **Exits.** `mode` is `sticky` (default) or `rotate`:
@@ -339,7 +329,8 @@ The cool-downs are kept in `$HARVEST_HOME/proxy_health.json` (ids only).
   `proxy_requests`, `proxy_ok`, `proxy_bytes`, `proxy_budget_stop` and a `proxy` summary. Lane detection records
   `lane_detail.via_proxy`, `signals.proxy_trigger` and, for a direct IP block without the route, `ip_block`.
 
-**Live check (prod, 2026-09-27).** This ran from a datacenter IP against the real 20,000-exit pool, read in place,
+**Live check (prod, 2026-09-27).** (At the time robots.txt and a terms verdict were still gates; they were removed
+later, see the changelog. The outcomes are kept as recorded.) This ran from a datacenter IP against the real 20,000-exit pool, read in place,
 with harvest's honest user agent, caps of 5–8 MB and 50–80 requests per project, and 1–2 pages per source.
 
 | Site | Direct from the datacenter | Through the route | Outcome |
@@ -371,22 +362,18 @@ from it (the two can be combined).
   and history in `project.json` → `ua` or the source's `lane_detail.ua`. A source decision wins. MCP
   `harvest_ua_status|enable|disable`; API `GET/POST /api/projects/{p}/ua`; a panel and per-source toggles in
   the web app. `tune` / `harvest_update_source` refuse it, and agents have no tool for it.
-- **Gates.** robots allow and the terms verdict is `allowed`/`no_clause` (lane detection may run with an unread
-  verdict so the terms can be read; `forbids` stops it); never for a source that is lane `none` because of a login,
-  paywall, captcha or challenge.
+- **Gates.** Never for a source that is lane `none` because of a login, paywall, captcha or challenge.
 - **What changes.** Only the header set: a current stable desktop Chrome UA (`Chrome/<major>.0.0.0`, the host's
   platform; `HARVEST_BROWSER_UA` overrides) with matching `Accept` and `Accept-Language: en-US,en;q=0.9`. The
   browser lane sends the launched Chromium build's own Chrome UA (without the "Headless" marker).
 - **What does not.** No fingerprint spoofing, no navigator.webdriver hiding, no captcha or challenge solving, no
   login or paywall work-arounds. A challenge page still stops the source (lane `none`).
-- **robots.txt** is evaluated for harvest's own token *and* for `*`; the stricter rule (and the longer
-  Crawl-delay) wins.
 - **Recorded.** Runs carry `ua_mode` (`own` | `browser`, a column and in `http_stats`), reviews and lane
   detection too; `harvest status` shows the decision and each source's mode. `run`, `review` and `detect-lane`
   take `--own-ua` to force harvest's UA.
 
-**Live re-check (prod, 2026-09-27)** of the three CloudFront user-agent blocks with the browser UA on, harvest's
-own terms gate first, no proxy, 1–2 pages:
+**Live re-check (prod, 2026-09-27)** of the three CloudFront user-agent blocks with the browser UA on, no proxy,
+1–2 pages. (Recorded when harvest still had a terms gate, since removed; kept as recorded.)
 
 | Site | Browser UA | Terms | Outcome |
 |---|---|---|---|
@@ -394,8 +381,7 @@ own terms gate first, no proxy, 1–2 pages:
 | standvirtual.com | 200, lane `embedded_json` | **unknown**: the T&C (Salesforce help centre) would not render from the host | skipped; its sister site's T&C forbid aggregation |
 | olx.pt | still 403 with the browser UA | unknown | not a UA-only block; lane `none` |
 
-No rows were collected, as the gates require. The check exposed a heuristic gap: the unrendered JavaScript help-centre
-pages had been classified `no_clause`. A terms page that is a JavaScript shell now classifies as `unknown`.
+No rows were collected, as the gates of the time required.
 
 ## 6. Normalisation and cleaning
 
@@ -559,12 +545,9 @@ Permission-bypass flags are refused. What an agent can do is limited in harvest 
   Census and audit agents have no file tools.
 - The harvest MCP server an agent gets runs with `HARVEST_AGENT_KIND` and refuses every tool outside that kind's
   list (`agents.MCP_ALLOWED`), even when the operator's own Claude Code settings pre-approve `mcp__harvest__*`.
-- Through `harvest_record_policy` an agent can make a source stricter but cannot lift a `forbids` verdict, open
-  a lane that is `none` or undetected, or cite terms off the source's own site. An agent's `allowed` or
-  `no_clause` verdict is recorded only after harvest re-reads the cited page itself. The page must be fetchable,
-  harvest's classifier must find no prohibition in it, and the quoted clause (required for `allowed`) must appear
-  in it. Otherwise the verdict stays where it was. Those are operator decisions (CLI,
-  web app); verdicts record who made them (`lane_detail.policy.by`).
+- Through `harvest_set_lane` a build agent can move a source between collectable lanes or set it to `none`, but
+  cannot open a lane that is `none` or undetected (a login, captcha, paywall, challenge or block). That is an
+  operator decision (`harvest lane`, the web API); overrides record who made them (`lane_detail.override.by`).
 - The agent's environment never carries `HARVEST_PROXY_*`, `HARVEST_ADMIN_TOKEN` or the alert hook settings. A
   custom agent CLI (`module:Class`) comes from `HARVEST_AGENT_CLI` only, never from a job parameter.
 
@@ -584,7 +567,7 @@ so there is a single source of instructions.
 ### MCP tools
 
 `harvest_templates`, `harvest_new_project`, `harvest_list_projects`, `harvest_census_plan`, `harvest_census_add`,
-`harvest_census_gaps`, `harvest_list_sources`, `harvest_detect_lane`, `harvest_record_policy`, `harvest_probe_url`,
+`harvest_census_gaps`, `harvest_list_sources`, `harvest_detect_lane`, `harvest_set_lane`, `harvest_probe_url`,
 `harvest_template_scraper`, `harvest_review_source`, `harvest_enable_source`, `harvest_update_source`, `harvest_run`,
 `harvest_status`, `harvest_quarantine`, `harvest_query`, `harvest_export`, `harvest_schedule`, `harvest_watchdog`,
 `harvest_set_fx`, `harvest_agent_brief`, `harvest_jobs`, `harvest_census_resume`, `harvest_proxy_status`,
@@ -594,7 +577,7 @@ Run the server with `harvest-mcp` (stdio) or `harvest mcp --http --port 8091`.
 
 ### CLI
 
-`harvest templates | new | projects | census-plan | census-add | gaps | sources | reject | detect-lane | policy | probe |
+`harvest templates | new | projects | census-plan | census-add | gaps | sources | reject | detect-lane | lane | probe |
 scaffold | review | enable | disable | tune | run [--due] | runs | quarantine | query | export | schedule | watchdog |
 fx | agent | census-resume | proxy status|enable|disable | ua status|enable|disable | worker | jobs | daemon | web | mcp`. Every command prints JSON; `harvest <cmd> -h` shows its options.
 
@@ -635,7 +618,7 @@ schedule and run the watchdog.
 | GET | `/api/projects/{p}/sources`, `/sources/{id}` | registry, one source in detail |
 | PATCH | `/api/projects/{p}/sources/{id}` | tune (field_map, max_pages, cadence …) |
 | POST | `/api/projects/{p}/sources/detect`, `/sources/{id}/detect` | lane detection job (`?wait=true` to block) |
-| POST | `/api/projects/{p}/sources/{id}/policy` | record a terms verdict or lane override |
+| POST | `/api/projects/{p}/sources/{id}/lane` | override the detected lane (`{"lane", "reason"}`) |
 | POST | `/api/projects/{p}/sources/{id}/scaffold` | write the lane template |
 | POST | `/api/projects/{p}/sources/{id}/build` | start a scraper-build agent job |
 | POST | `/api/projects/{p}/sources/{id}/review` | review gate job |
@@ -672,9 +655,9 @@ The plugin provides:
 harvest new used-cars --target "used cars" --regions KZ,GE --record-type vehicles --cadence daily
 harvest fx used-cars '{"KZT": 480, "GEL": 2.7}'
 harvest agent used-cars census          # classifieds, marketplaces, vertical portals ... in kk, ru, ka, en
-harvest agent used-cars audit           # independent adversarial pass + terms verdicts
+harvest agent used-cars audit           # independent adversarial pass
 harvest gaps used-cars                  # matrix KZ/GE x angles, dry streak >= 2
-harvest detect-lane used-cars           # lanes for every candidate; forbids/login/robots -> none
+harvest detect-lane used-cars           # lanes for every candidate; login/captcha/paywall/challenge -> none
 harvest sources used-cars               # review the list
 harvest agent used-cars build <id>      # per source: template -> fetch() -> review until pass
 harvest enable used-cars <id>
@@ -769,8 +752,6 @@ Workers run agent-written code, so give them the strongest isolation the platfor
 
 ## Known limits
 
-- The terms classifier is a keyword heuristic. Treat `no_clause` as "nothing found", and have the auditor record
-  a reviewed verdict for important sources.
 - The built-in public-suffix subset covers common registries; set `HARVEST_PSL_FILE` for the full list.
 - Without bubblewrap (macOS, containers) the module sandbox is the policy layer only; see "Running workers in
   production".

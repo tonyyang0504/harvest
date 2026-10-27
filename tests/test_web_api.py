@@ -55,7 +55,9 @@ def test_full_flow_over_the_api(client, cars):
     sid = add["added"][0]["id"]
     assert client.get("/api/projects/cars/census/gaps", headers=AUTH).json()["sources"] == 1
     job = client.post(f"/api/projects/cars/sources/{sid}/detect?wait=true", headers=AUTH).json()
-    assert job["status"] == "done" and job["result"]["lane"] == "html" and job["result"]["terms"]["status"] == "no_clause"
+    assert job["status"] == "done" and job["result"]["lane"] == "html" and "terms" not in job["result"]
+    assert client.post(f"/api/projects/cars/sources/{sid}/lane", headers=AUTH, json={"lane": "html", "reason": "checked"}).json()["source"]["lane"] == "html"
+    assert client.post(f"/api/projects/cars/sources/{sid}/policy", headers=AUTH, json={"terms_status": "allowed"}).status_code in (404, 405)
     sc = client.post(f"/api/projects/cars/sources/{sid}/scaffold", headers=AUTH).json()
     assert sc["written"] and "def fetch" in sc["code"]
     project.load("cars").module_path(sid).write_text(CAR_MODULE, encoding="utf-8")  # what the build agent would write

@@ -9,7 +9,7 @@ Collect **$ARGUMENTS** with harvest. Load the `harvest` skill and follow its flo
    Use `harvest_templates` if the type is unclear. Then call `harvest_new_project`.
 2. Dispatch the `harvest-census` agent, then the `harvest-auditor` agent.
 3. Call `harvest_detect_lane` for all candidates. Dispatch one `harvest-builder` agent per source that has a lane.
-4. Show the user the source list with lanes, terms and review verdicts. Call `harvest_enable_source` for the sources they approve.
+4. Show the user the source list with lanes and review verdicts. Call `harvest_enable_source` for the sources they approve.
 5. Call `harvest_run`, then `harvest_status`. Offer `harvest_export`, and offer `harvest_schedule` for recurring collection.
 
-Policy: public pages only. Never log in, solve captchas, get past paywalls or use mirrors. Terms that forbid collection mean lane `none`.
+Policy: public pages only. Never log in, solve captchas, get past paywalls or use mirrors. A login, captcha, paywall or bot challenge means lane `none`.

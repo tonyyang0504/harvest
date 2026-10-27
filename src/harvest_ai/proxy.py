@@ -8,8 +8,7 @@ logged, printed or stored; an exit is named by `exit_id` (a hash) everywhere els
 
 The route is used only when ALL of these hold (see `eligible` and `Http.request`):
   (a) the project or the source is switched on by a recorded operator decision (reason + date);
-  (b) robots.txt allows the source and its terms verdict is allowed/no_clause (lane detection may also run with
-      a not-yet-read `unknown` verdict so the proxied probe can read the terms; `forbids` always stops it);
+  (b) the source is not lane none for a login wall, paywall, captcha or bot challenge;
   (c) the direct request hit an IP-level block: 401/403 without a challenge, login or paywall page, a connection
       reset, or a 429 that persisted through the back-off.
 Never for captcha / bot-challenge pages (Cloudflare, DataDome, PerimeterX, Imperva, Kasada, AWS WAF ...),
@@ -461,17 +460,6 @@ def eligible(p, src: dict, purpose: str = "run") -> tuple[bool, str]:
     ok, why = switched_on(p, src)
     if not ok:
         return False, why
-    if src.get("robots_status") == "disallowed":
-        return False, "robots.txt disallows the source"
-    terms = src.get("terms_status")
-    if terms == "forbids":
-        return False, "the terms forbid automated collection"
-    if purpose == "detect":
-        pass  # an unread verdict may be read through the route; forbids stops it (above and in lanes)
-    elif terms not in ("allowed", "no_clause"):
-        return False, f"terms verdict is {terms}; record allowed/no_clause first"
-    elif src.get("robots_status") != "allowed":
-        return False, f"robots status is {src.get('robots_status')}"
     reason = ((src.get("lane_detail") or {}).get("reason") or "").lower()
     if any(w in reason for w in ("login", "paywall", "captcha", "challenge")):
         return False, f"lane none for a reason the proxy never works around ({reason})"

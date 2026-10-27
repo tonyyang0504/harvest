@@ -66,7 +66,9 @@ def test_end_to_end_demo_used_cars(cars, tmp_path):
     sid = out["added"][0]["id"]
     # 2. lane
     code, out = _cli("detect-lane", "used-cars", sid, "--no-mcp")
-    assert out["lane"] == "html" and out["robots_status"] == "allowed" and out["terms"]["status"] == "no_clause"
+    assert out["lane"] == "html" and "terms" not in out and "robots_status" not in out
+    code, out = _cli("lane", "used-cars", sid, "html", "--reason", "operator checked the listing page")
+    assert code == 0 and out["source"]["lane"] == "html" and out["source"]["status"] == "lane_detected"
     # 3. scraper from the template, then the agent's edits (select the real cards)
     code, out = _cli("scaffold", "used-cars", sid)
     path = project.load("used-cars").module_path(sid)

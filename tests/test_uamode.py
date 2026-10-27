@@ -1,4 +1,4 @@
-"""Browser user-agent mode: the decision gate, the header set, robots for both tokens, runs recording, and that a
+"""Browser user-agent mode: the decision gate, the header set, runs recording, and that a
 challenge page still stops the source."""
 
 import asyncio
@@ -23,8 +23,7 @@ def _ua_gated_cars():
 
 def _ready(p, s):
     sid = add_source(p, s.url + "/cars", regions=("KZ",))
-    p.store.upsert_source(p.name, sid, {"lane": "html", "robots_status": "allowed", "terms_status": "no_clause", "terms_url": s.url + "/terms",
-                                        "status": "lane_detected"})
+    p.store.upsert_source(p.name, sid, {"lane": "html", "status": "lane_detected"})
     p.module_path(sid).write_text(CAR_MODULE, encoding="utf-8")
     return sid
 
@@ -48,16 +47,13 @@ def test_ua_override_env(monkeypatch):
     assert Http(ua_mode="browser").ua.endswith("Chrome/154.0.0.0 Safari/537.36")
 
 
-def test_robots_checked_for_harvest_and_star_stricter_wins(site):
+def test_robots_txt_is_ignored_in_both_modes(site):
     site.route("/robots.txt", (200, {"content-type": "text/plain"},
-                               "User-agent: harvest-bot\nAllow: /\nDisallow: /own-only\n\nUser-agent: *\nDisallow: /cars\nCrawl-delay: 0.2\n"))
-    for path in ("/cars", "/own-only", "/ok"):
-        site.route(path, "<p>x</p>" * 50)
+                               "User-agent: harvest-bot\nDisallow: /\n\nUser-agent: *\nDisallow: /\nCrawl-delay: 30\n"))
+    site.route("/cars", "<p>x</p>" * 50)
     own, br = Http(rate_s=0.01), Http(rate_s=0.01, ua_mode="browser")
-    assert own.get_text(site.url + "/cars") is not None and br.get_text(site.url + "/cars") is None  # `*` disallows it
-    assert own.get_text(site.url + "/own-only") is None and br.get_text(site.url + "/own-only") is None  # harvest's group still counts
-    assert br.get_text(site.url + "/ok") is not None
-    assert br._host(site.url.split("//")[1]).delay >= 0.2  # the stricter Crawl-delay too
+    assert own.get_text(site.url + "/cars") is not None and br.get_text(site.url + "/cars") is not None
+    assert br._host(site.url.split("//")[1]).delay == 0.01 and site.count("/robots.txt") == 0
 
 
 def test_decision_gate(cars):
@@ -68,12 +64,9 @@ def test_decision_gate(cars):
     with pytest.raises(ValueError, match="reason"):
         uamode.enable(p, reason="short")
     uamode.enable(p, reason="the site refuses non-browser agents", by="test")
-    p.store.upsert_source(p.name, sid, {"robots_status": "allowed", "terms_status": "unknown"})
-    assert uamode.mode_for(p, src(), "run") == "own" and uamode.mode_for(p, src(), "detect") == "browser"
-    p.store.upsert_source(p.name, sid, {"terms_status": "forbids"})
-    assert uamode.mode_for(p, src(), "detect") == "own"
-    p.store.upsert_source(p.name, sid, {"terms_status": "no_clause"})
-    assert uamode.mode_for(p, src(), "run") == "browser" and uamode.mode_for(p, src(), "run", enabled=False) == "own"
+    # no robots/terms condition: the operator decision is enough
+    assert uamode.mode_for(p, src(), "run") == "browser" and uamode.mode_for(p, src(), "detect") == "browser"
+    assert uamode.mode_for(p, src(), "run", enabled=False) == "own"
     p.store.upsert_source(p.name, sid, {"lane": "none", "lane_detail": {"reason": "page not publicly fetchable (blocked 403 challenge)"}})
     assert uamode.mode_for(p, src(), "run") == "own"
     p.store.upsert_source(p.name, sid, {"lane": "html", "lane_detail": {"reason": "server-rendered HTML"}})
@@ -92,7 +85,7 @@ def test_review_and_run_record_ua_mode():
         p = make_project()
         sid = _ready(p, s)
         assert review.review(p, sid, timeout_s=60)["verdict"] == "fail"  # harvest's own UA is refused: a finding
-        service.ua_enable(p.name, "the WAF refuses non-browser user agents; terms read", source_id=sid)
+        service.ua_enable(p.name, "the WAF refuses non-browser user agents on every page", source_id=sid)
         rep = review.review(p, sid, timeout_s=60)
         assert rep["verdict"] == "pass" and rep["ua_mode"] == "browser" and rep["smoke"]["http"]["ua_mode"] == "browser"
         assert review.enable(p, sid)["enabled"]
@@ -123,8 +116,7 @@ def test_challenge_pages_still_stop_the_source():
         src = p.store.get_source(p.name, sid)
         assert not src["enabled"] and uamode.mode_for(p, src, "detect") == "own"  # a challenge lane is never retried with it
         # a reviewed, enabled module still gets nothing from a challenge page
-        p.store.upsert_source(p.name, sid, {"lane": "html", "robots_status": "allowed", "terms_status": "no_clause", "terms_url": s.url + "/t",
-                                            "lane_detail": {"reason": "server-rendered HTML"}})
+        p.store.upsert_source(p.name, sid, {"lane": "html", "lane_detail": {"reason": "server-rendered HTML"}})
         p.module_path(sid).write_text(CAR_MODULE, encoding="utf-8")
         rep = review.review(p, sid, timeout_s=60)
         assert rep["verdict"] == "fail" and rep["ua_mode"] == "browser" and rep["smoke"]["http"]["blocked"] >= 1
@@ -163,11 +155,3 @@ def test_web_toggle():
     assert c.get("/api/projects/uaweb", headers=auth).json()["ua"]["decision"]["enabled"]
     assert c.get("/api/projects/uaweb/ua", headers=auth).json()["decision"]["enabled"]
 
-
-def test_an_unrendered_terms_shell_is_unknown_not_no_clause():
-    from harvest_ai import lanes
-    shell = "<html><head>" + "<script src='/s/sfsites/auraFW/app.js'></script>" * 30 + "</head><body><div id='app'></div>Loading...</body></html>"
-    assert lanes.classify_terms(shell)["status"] == "unknown"
-    assert lanes.classify_terms("<html><body><noscript>Enable JavaScript</noscript><div id='root'></div></body></html>")["status"] == "unknown"
-    assert lanes.classify_terms(html_page("<h1>Terms</h1><p>Use this site kindly.</p>"))["status"] == "no_clause"
-    assert lanes.classify_terms(html_page("<p>" + "Use this site kindly. " * 40 + "</p>"))["status"] == "no_clause"

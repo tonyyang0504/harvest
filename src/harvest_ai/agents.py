@@ -62,10 +62,9 @@ def edit_rule(path) -> str:
 # pre-approves every mcp__harvest__* tool cannot hand an agent harvest_enable_source, harvest_proxy_enable & co.
 MCP_ALLOWED = {
     "census": ("harvest_census_plan", "harvest_census_add", "harvest_census_gaps", "harvest_list_sources", "harvest_probe_url"),
-    "audit": ("harvest_census_gaps", "harvest_census_add", "harvest_list_sources", "harvest_detect_lane", "harvest_record_policy",
-              "harvest_probe_url"),
+    "audit": ("harvest_census_gaps", "harvest_census_add", "harvest_list_sources", "harvest_detect_lane", "harvest_probe_url"),
     "build": ("harvest_probe_url", "harvest_review_source", "harvest_list_sources", "harvest_template_scraper", "harvest_detect_lane",
-              "harvest_record_policy"),
+              "harvest_set_lane"),
     "repair": ("harvest_probe_url", "harvest_review_source", "harvest_list_sources", "harvest_template_scraper"),
 }
 # never passed to an agent's environment (the agent has no use for them; a prompt-injected agent should not hold them)

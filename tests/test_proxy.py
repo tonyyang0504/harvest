@@ -274,15 +274,20 @@ def test_a_block_that_survives_the_proxy_is_not_an_ip_block(fp, site):
     assert any(e["event"] == "proxy_no_help" for e in h.events)
 
 
-def test_robots_behind_an_ip_block_is_read_through_the_route(fp):
+def test_the_route_ignores_robots_txt_but_never_a_challenge(fp):
+    """robots.txt is no rule for the route either: an IP-blocked page whose robots.txt says `Disallow: /` is fetched
+    through the route. A challenge page is still never retried through it."""
     s = start(Site())
-    s.route("/robots.txt", lambda req: (200, {"content-type": "text/plain"}, "User-agent: *\nDisallow: /list\n") if fp.is_proxied(req.peer)
+    s.route("/robots.txt", (200, {"content-type": "text/plain"}, "User-agent: *\nDisallow: /\n"))
+    s.route("/list", lambda req: (200, {"content-type": "text/html"}, "<p>x</p>" * 50) if fp.is_proxied(req.peer)
             else (403, {"content-type": "text/html"}, "denied"))
-    s.route("/list", "<p>x</p>" * 50)
+    s.route("/wall", (403, {"content-type": "text/html"}, "<title>Just a moment...</title>cf-chl"))
     try:
         h = _http(_route(fp))
-        assert h.get_text(s.url + "/list") is None and h.stats["robots_denied"] == 1  # the real robots.txt, not "403 = allow all"
-        assert s.count("/list") == 0
+        assert "x" in h.get_text(s.url + "/list") and h.stats["proxy_ok"] == 1 and s.count("/robots.txt") == 0
+        h2 = _http(_route(fp))
+        n = len(fp.hits)
+        assert h2.get_text(s.url + "/wall") is None and len(fp.hits) == n and h2.stats["proxy_refused"] == 1
     finally:
         s.server.shutdown()
 
@@ -315,7 +320,7 @@ def test_request_budget_and_zero_allowance(fp):
 
 
 # ---------------------------------------------------------------- gates (a) + (b)
-def test_decision_and_policy_gates(pool, cars):
+def test_decision_and_lane_gates(pool, cars):
     p = make_project(regions=("GE",))
     sid = add_source(p, cars.url + "/cars", regions=("GE",))
     src = lambda: p.store.get_source(p.name, sid)  # noqa: E731
@@ -323,13 +328,9 @@ def test_decision_and_policy_gates(pool, cars):
     with pytest.raises(ValueError, match="reason"):
         proxy.enable(p, reason="")
     proxy.enable(p, reason="market leader 403s the datacenter IP", by="test")
-    p.store.upsert_source(p.name, sid, {"robots_status": "allowed", "terms_status": "unknown"})
-    assert not proxy.eligible(p, src(), "run")[0] and proxy.eligible(p, src(), "detect")[0]  # detection may read the terms
-    p.store.upsert_source(p.name, sid, {"terms_status": "forbids"})
-    assert not proxy.eligible(p, src(), "detect")[0] and not proxy.eligible(p, src(), "run")[0]
-    p.store.upsert_source(p.name, sid, {"terms_status": "no_clause", "robots_status": "disallowed"})
-    assert not proxy.eligible(p, src(), "detect")[0]
-    p.store.upsert_source(p.name, sid, {"robots_status": "allowed"})
+    # robots.txt and terms are no gate: the operator decision is enough (legacy columns from an old database are ignored)
+    assert proxy.eligible(p, src(), "run") == (True, "project decision") and proxy.eligible(p, src(), "detect")[0]
+    p.store.execute("UPDATE sources SET robots_status = 'disallowed', terms_status = 'forbids' WHERE project = ? AND id = ?", (p.name, sid))
     assert proxy.eligible(p, src(), "run") == (True, "project decision")
     p.store.upsert_source(p.name, sid, {"lane": "none", "lane_detail": {"reason": "content is behind a login"}})
     assert not proxy.eligible(p, src(), "run")[0]
@@ -369,7 +370,6 @@ def test_lane_detection_reprobes_through_the_proxy(fp, pool):
         assert res["lane"] in ("html", "embedded_json") and res["via_proxy"] and res["proxy"]["requests"] >= 1
         src = p.store.get_source(p.name, sid)
         assert src["lane_detail"]["via_proxy"] and src["lane_detail"]["proxy"]["enabled"] and src["status"] == "lane_detected"
-        assert src["terms_status"] == "no_clause"  # the terms were read through the route
         assert p.store.proxy_usage_total(p.name, proxy.today())["requests"] >= 1
     finally:
         s.server.shutdown()
@@ -384,11 +384,10 @@ def test_review_and_run_through_the_proxy_then_budget_stop_alert(fp, pool, tmp_p
     try:
         p = make_project(regions=("GE",))
         sid = add_source(p, s.url + "/cars", regions=("GE",))
-        p.store.upsert_source(p.name, sid, {"lane": "html", "robots_status": "allowed", "terms_status": "no_clause", "terms_url": s.url + "/terms",
-                                            "status": "lane_detected"})
+        p.store.upsert_source(p.name, sid, {"lane": "html", "status": "lane_detected"})
         p.module_path(sid).write_text(CAR_MODULE, encoding="utf-8")
         assert review.review(p, sid, timeout_s=60)["verdict"] == "fail"  # direct only: the IP block is a finding
-        proxy.enable(p, reason="GE leader blocks the datacenter IP; terms read, no clause", daily_bytes=5_000_000, daily_requests=50)
+        proxy.enable(p, reason="GE leader blocks the datacenter IP from page 1", daily_bytes=5_000_000, daily_requests=50)
         rep = review.review(p, sid, timeout_s=60)
         assert rep["verdict"] == "pass" and rep["smoke"]["proxy"]["requests"] >= 1, rep["smoke"]
         assert review.enable(p, sid)["enabled"]
@@ -426,7 +425,6 @@ def test_allowance_is_shared_between_walks_of_a_run(pool):
     sids = []
     for n in ("a", "b"):
         sid = add_source(p, f"https://{n}.example.ge/", regions=("GE",))
-        p.store.upsert_source(p.name, sid, {"robots_status": "allowed", "terms_status": "no_clause"})
         sids.append(sid)
     pend = proxy.Pending(2)
     l1 = proxy.arm(p, p.store.get_source(p.name, sids[0]), "run", pend)

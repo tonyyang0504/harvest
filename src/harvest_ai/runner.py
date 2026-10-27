@@ -8,8 +8,8 @@
   reasons; the run row carries a heartbeat so the watchdog can see a stuck walk;
 - the never-wipe rule is applied at the end (see `db.Store.finalize_run`);
 - a module whose sha differs from its passing review is not run (status `review_stale`);
-- the residential-proxy route is armed per walk only when the operator switched it on and the source's
-  robots/terms verdict allows collection (proxy.py); the walk uses it only after an IP-level block.
+- the residential-proxy route is armed per walk only when the operator switched it on for the project or
+  source and its budget allows (proxy.py); the walk uses it only after an IP-level block.
 """
 
 from __future__ import annotations
@@ -140,11 +140,11 @@ def _run_locked(p: Project, sid: str, src: dict, cur_sha: str, lk, *, trigger: s
     if page_errors and not error:
         error = page_errors[-1][:500]
     if not error and counters["stored"] == 0:
-        # nothing stored because requests failed (a 5xx, a persistent 429, robots.txt unreachable): say so, instead of
+        # nothing stored because requests failed (a 5xx, a persistent 429, a block): say so, instead of
         # looking like a source that is simply empty (soak 2026-10: outages were recorded as `empty`, alerted "(done: )")
         hs = end.get("http") or {}
         parts = [f"{hs[k]} {label}" for k, label in (("errors", "request(s) failed"), ("blocked", "blocked"),
-                                                     ("robots_denied", "denied by robots.txt"), ("gated", "refused by the URL gate"))
+                                                     ("gated", "refused by the URL gate"))
                  if int(hs.get(k) or 0) > 0]
         if parts:
             error = "no rows: " + ", ".join(parts)

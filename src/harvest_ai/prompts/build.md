@@ -4,16 +4,12 @@ You write ONE scraper module, `{{module_path}}`, that returns `{{record_type}}` 
 You may edit only that file.
 
 ## Steps
-1. `harvest_list_sources(project="{{project}}")`: read this source's row (url, lane, lane_detail, terms, robots).
+1. `harvest_list_sources(project="{{project}}")`: read this source's row (url, lane, lane_detail).
    If the lane is missing, call `harvest_detect_lane`. If the lane is `none`, stop and report why. Never work
-   around robots.txt, terms, logins, captchas or paywalls.
-1b. If `terms_status` is `unknown`, find the site's terms of use (footer links: terms, conditions, legal, termos,
-   условия ...), read the clauses on automated access / scraping / data collection, and record your verdict with
-   `harvest_record_policy` (`allowed` or `no_clause` with the terms URL and a clause of at most 25 words in the
-   original language, or `forbids`). If it forbids collection, stop: the source stays lane `none`.
+   around bot challenges, logins, captchas or paywalls.
 2. `harvest_template_scraper(project, source_id)` writes the starting module for the lane and returns the
    contract and the template fields. Read the module.
-3. Inspect the site with `harvest_probe_url` (polite, robots-checked): page 1, page 2, the item markup or
+3. Inspect the site with `harvest_probe_url` (polite, rate-limited): page 1, page 2, the item markup or
    embedded JSON. Find the pagination parameter and a stable item id.
 4. Implement `fetch(page, *, http, ctx)`:
    - Use only `http.get_text`, `http.get_json`, `http.post_json` or `http.render`, plus `harvest_ai.extract` helpers.
@@ -29,7 +25,7 @@ You may edit only that file.
      out of stock unless the template has an availability field.
    If the detected lane is not the best one (e.g. a feed that only carries the 10 newest items of every category),
    build on the better public surface and record what you built on with
-   `harvest_record_policy(project, source_id, lane=<lane>, reason=<why>)`. Lanes: `json_api` (a public JSON endpoint
+   `harvest_set_lane(project, source_id, lane=<lane>, reason=<why>)`. Lanes: `json_api` (a public JSON endpoint
    that needs no key or login: the site's own list API, Shopify `products.json`, WooCommerce Store API, WordPress
    REST), `openapi` (a documented API), `feed`, `sitemap`, `embedded_json` (data inside the HTML), `html`, `browser`.
 5. `harvest_review_source(project, source_id)` runs lint, a sandboxed page-1 fetch and schema validation.
